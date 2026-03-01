@@ -1,0 +1,20 @@
+[Unit]
+Description=swing-cam H.264 stream
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/swing-cam
+ExecStart=/home/pi/swing-cam/stream.sh ${SERVER_IP} ${PORT}
+Restart=always
+RestartSec=10
+User=pi
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=swing-cam
+
+[Install]
+WantedBy=multi-user.target

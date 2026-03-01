@@ -1,0 +1,43 @@
+# swing-cam server configuration
+
+server:
+  host: "0.0.0.0"
+  web_port: 8080
+
+cameras:
+  - name: "face-on"
+    host: "0.0.0.0"          # Listen address for incoming stream
+    port: 8888               # Port the Pi streams to
+    angle: "face-on"         # face-on | dtl (down-the-line)
+
+  # Uncomment when you add a second camera:
+  # - name: "dtl"
+  #   host: "0.0.0.0"
+  #   port: 8889
+  #   angle: "dtl"
+
+detection:
+  # Motion detection via frame differencing
+  motion_threshold: 25        # Pixel difference threshold (0-255)
+  motion_area_pct: 1.5        # % of frame that must be "moving" to trigger
+  cooldown_seconds: 5         # Min seconds between swing detections
+  # Region of interest (normalized 0.0-1.0, x, y, w, h)
+  # Crop to just the hitting area to reduce false positives
+  roi: null                   # null = full frame, or [0.2, 0.1, 0.6, 0.8]
+
+clips:
+  pre_seconds: 3              # Seconds before swing trigger to include
+  post_seconds: 6             # Seconds after swing trigger to include
+  output_dir: "./clips"       # Where to save swing clips
+  format: "mp4"               # Output format
+
+buffer:
+  max_seconds: 20             # Circular buffer size per camera
+
+correlation:
+  # For multi-camera setups: max time gap (seconds) between detections
+  # on different cameras to consider them the same swing
+  window_seconds: 2.0
+
+database:
+  path: "./swings.db"
