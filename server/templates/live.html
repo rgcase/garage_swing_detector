@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>swing-cam | Live</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+        header {
+            padding: 1rem 1.5rem; border-bottom: 1px solid #222;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        header h1 { font-size: 1.3rem; }
+        a { color: #4ade80; text-decoration: none; }
+
+        .streams {
+            display: flex; flex-wrap: wrap; gap: 0;
+        }
+        .stream-panel {
+            flex: 1; min-width: 320px; position: relative;
+            background: #000;
+        }
+        .stream-panel img {
+            width: 100%; display: block;
+        }
+        .stream-label {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.7); color: #aaa;
+            padding: 4px 10px; border-radius: 4px;
+            font-size: 0.8rem; text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .stream-status {
+            position: absolute; top: 10px; right: 10px;
+            display: flex; align-items: center; gap: 6px;
+            background: rgba(0,0,0,0.7); padding: 4px 10px;
+            border-radius: 4px; font-size: 0.75rem;
+        }
+        .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block;
+        }
+        .dot.on { background: #4ade80; }
+        .dot.off { background: #555; }
+
+        .offline-msg {
+            display: flex; align-items: center; justify-content: center;
+            height: 400px; color: #555; font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .stream-panel { min-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Live View</h1>
+        <a href="/">&larr; Back to swings</a>
+    </header>
+
+    <div class="streams">
+        {% for cam in cameras %}
+        <div class="stream-panel">
+            <span class="stream-label">{{ cam.name }}</span>
+            <div class="stream-status">
+                <span class="dot {{ 'on' if cam.connected else 'off' }}"></span>
+                {{ 'live' if cam.connected else 'offline' }}
+            </div>
+            {% if cam.connected %}
+            <img src="/api/stream/{{ cam.name }}" alt="{{ cam.name }} live stream">
+            {% else %}
+            <div class="offline-msg">{{ cam.name }} is offline</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        {% if not cameras %}
+        <div class="offline-msg" style="width:100%;">No cameras configured</div>
+        {% endif %}
+    </div>
+</body>
+</html>

@@ -104,6 +104,44 @@ def create_app(
             },
         )
 
+    @app.get("/live", response_class=HTMLResponse)
+    async def live_page(request: Request):
+        cameras = _camera_status(_receivers, _buffers)
+        return templates.TemplateResponse(
+            "live.html",
+            {"request": request, "cameras": cameras},
+        )
+
+    @app.get("/api/stream/{camera_name}")
+    async def api_stream(camera_name: str):
+        """MJPEG stream of live frames from a camera."""
+        buf = _buffers.get(camera_name)
+        if not buf:
+            raise HTTPException(404, f"Camera '{camera_name}' not found")
+
+        async def mjpeg_generator():
+            last_index = -1
+            while True:
+                latest = buf.get_latest()
+                if latest is None or latest.index == last_index:
+                    await asyncio.sleep(0.033)  # ~30fps cap
+                    continue
+                last_index = latest.index
+                _, jpeg = cv2.imencode(
+                    ".jpg", latest.frame, [cv2.IMWRITE_JPEG_QUALITY, 70]
+                )
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + jpeg.tobytes()
+                    + b"\r\n"
+                )
+
+        return StreamingResponse(
+            mjpeg_generator(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
     # ── API ──
 
     @app.get("/api/swings")
