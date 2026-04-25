@@ -1,9 +1,9 @@
 """
 Gesture detector: watches for thumbs up/down after a swing is detected.
 
-Uses MediaPipe Hands to detect hand landmarks and classify gestures.
-Only runs during a short window after a swing to save CPU and avoid
-false positives.
+Uses MediaPipe HandLandmarker (Tasks API) to detect hand landmarks
+and classify gestures. Only runs during a short window after a swing
+to save CPU and avoid false positives.
 """
 
 import logging
@@ -11,8 +11,17 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+from pathlib import Path
+
+import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+MODELS_DIR = Path(__file__).parent / "models"
+HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+HAND_MODEL_PATH = MODELS_DIR / "hand_landmarker.task"
 
 try:
     import mediapipe as mp
@@ -23,6 +32,16 @@ except ImportError:
         "mediapipe not installed — gesture detection disabled. "
         "Install with: pip install mediapipe"
     )
+
+
+def _download_model(url: str, dest: Path):
+    """Download a model file if it doesn't exist."""
+    if dest.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Downloading model to {dest}...")
+    urllib.request.urlretrieve(url, dest)
+    logger.info(f"Model downloaded: {dest}")
 
 
 class GestureDetector:
@@ -52,20 +71,27 @@ class GestureDetector:
         self._frame_counter = 0
         self._gesture_streak: dict[str, int] = {}
         self._lock = threading.Lock()
+        self._detector = None
 
         if HAS_MEDIAPIPE:
-            self._hands = mp.solutions.hands.Hands(
-                static_image_mode=False,
-                max_num_hands=1,
-                min_detection_confidence=0.6,
-                min_tracking_confidence=0.5,
-            )
-        else:
-            self._hands = None
+            try:
+                _download_model(HAND_MODEL_URL, HAND_MODEL_PATH)
+                options = mp.tasks.vision.HandLandmarkerOptions(
+                    base_options=mp.tasks.BaseOptions(
+                        model_asset_path=str(HAND_MODEL_PATH)
+                    ),
+                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                    num_hands=1,
+                    min_hand_detection_confidence=0.6,
+                    min_tracking_confidence=0.5,
+                )
+                self._detector = mp.tasks.vision.HandLandmarker.create_from_options(options)
+            except Exception as e:
+                logger.warning(f"Failed to initialize hand landmarker: {e}")
 
     def start_watching(self, swing_id: str):
         """Begin gesture detection window after a swing."""
-        if not HAS_MEDIAPIPE:
+        if not self._detector:
             return
         with self._lock:
             self._active = True
@@ -81,7 +107,7 @@ class GestureDetector:
         Args:
             frame: BGR numpy array from the camera.
         """
-        if not self._active or not self._hands:
+        if not self._active or not self._detector:
             return
 
         now = time.time()
@@ -98,16 +124,16 @@ class GestureDetector:
             swing_id = self._active_swing_id
 
         # Run hand detection (outside lock — this is the expensive part)
-        import cv2
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self._hands.process(rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = self._detector.detect(mp_image)
 
-        if not results.multi_hand_landmarks:
+        if not result.hand_landmarks:
             self._gesture_streak.clear()
             return
 
-        hand = results.multi_hand_landmarks[0]
-        gesture = self._classify_gesture(hand)
+        hand_landmarks = result.hand_landmarks[0]
+        gesture = self._classify_gesture(hand_landmarks)
 
         if gesture:
             count = self._gesture_streak.get(gesture, 0) + 1
@@ -124,10 +150,10 @@ class GestureDetector:
             self._gesture_streak.clear()
 
     @staticmethod
-    def _classify_gesture(hand) -> str | None:
+    def _classify_gesture(landmarks) -> str | None:
         """Classify hand landmarks as thumbs up, thumbs down, or None.
 
-        MediaPipe hand landmarks:
+        MediaPipe hand landmarks (Tasks API returns list of NormalizedLandmark):
             0: WRIST
             1: THUMB_CMC, 2: THUMB_MCP, 3: THUMB_IP, 4: THUMB_TIP
             5: INDEX_MCP, 6: INDEX_PIP, 7: INDEX_DIP, 8: INDEX_TIP
@@ -135,7 +161,7 @@ class GestureDetector:
             13: RING_MCP, 14: RING_PIP, 15: RING_DIP, 16: RING_TIP
             17: PINKY_MCP, 18: PINKY_PIP, 19: PINKY_DIP, 20: PINKY_TIP
         """
-        lm = hand.landmark
+        lm = landmarks
 
         thumb_tip = lm[4]
         thumb_mcp = lm[2]

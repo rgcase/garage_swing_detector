@@ -7,6 +7,7 @@ venv/
 # Project runtime
 clips/
 logs/
+server/models/
 *.db
 *.db-wal
 *.db-shm

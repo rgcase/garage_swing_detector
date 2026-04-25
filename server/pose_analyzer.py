@@ -2,14 +2,16 @@
 Pose analyzer: runs MediaPipe Pose on saved swing clips to detect
 swing phases and extract metrics.
 
-Runs offline (on saved clips, not live frames) to avoid CPU contention
-with the real-time detection pipeline.
+Uses the MediaPipe Tasks API (PoseLandmarker). Runs offline (on saved
+clips, not live frames) to avoid CPU contention with the real-time
+detection pipeline.
 """
 
 import json
 import logging
 import math
 import threading
+import urllib.request
 from collections import deque
 from pathlib import Path
 
@@ -17,6 +19,10 @@ import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+MODELS_DIR = Path(__file__).parent / "models"
+POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+POSE_MODEL_PATH = MODELS_DIR / "pose_landmarker_lite.task"
 
 try:
     import mediapipe as mp
@@ -28,7 +34,7 @@ except ImportError:
         "Install with: pip install mediapipe"
     )
 
-# MediaPipe Pose landmark indices
+# MediaPipe Pose landmark indices (same in Tasks API)
 NOSE = 0
 LEFT_SHOULDER = 11
 RIGHT_SHOULDER = 12
@@ -40,15 +46,14 @@ LEFT_HIP = 23
 RIGHT_HIP = 24
 
 
-def _angle_between(a, b):
-    """Angle in degrees between two 2D vectors."""
-    dot = a[0] * b[0] + a[1] * b[1]
-    mag_a = math.sqrt(a[0]**2 + a[1]**2)
-    mag_b = math.sqrt(b[0]**2 + b[1]**2)
-    if mag_a == 0 or mag_b == 0:
-        return 0.0
-    cos_angle = max(-1.0, min(1.0, dot / (mag_a * mag_b)))
-    return math.degrees(math.acos(cos_angle))
+def _download_model(url: str, dest: Path):
+    """Download a model file if it doesn't exist."""
+    if dest.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Downloading model to {dest}...")
+    urllib.request.urlretrieve(url, dest)
+    logger.info(f"Model downloaded: {dest}")
 
 
 def _midpoint(lm_a, lm_b):
@@ -72,20 +77,26 @@ class PoseAnalyzer:
         self._queue: deque[tuple[str, str, str]] = deque()  # (swing_id, camera_name, filepath)
         self._lock = threading.Lock()
         self._running = False
+        self._detector = None
 
         if HAS_MEDIAPIPE:
-            self._pose = mp.solutions.pose.Pose(
-                static_image_mode=False,
-                model_complexity=1,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
-        else:
-            self._pose = None
+            try:
+                _download_model(POSE_MODEL_URL, POSE_MODEL_PATH)
+                options = mp.tasks.vision.PoseLandmarkerOptions(
+                    base_options=mp.tasks.BaseOptions(
+                        model_asset_path=str(POSE_MODEL_PATH)
+                    ),
+                    running_mode=mp.tasks.vision.RunningMode.VIDEO,
+                    min_pose_detection_confidence=0.5,
+                    min_tracking_confidence=0.5,
+                )
+                self._detector = mp.tasks.vision.PoseLandmarker.create_from_options(options)
+            except Exception as e:
+                logger.warning(f"Failed to initialize pose landmarker: {e}")
 
     def queue_analysis(self, swing_id: str, camera_name: str, filepath: str):
         """Queue a clip for background analysis."""
-        if not HAS_MEDIAPIPE:
+        if not self._detector:
             return
         with self._lock:
             self._queue.append((swing_id, camera_name, filepath))
@@ -129,7 +140,7 @@ class PoseAnalyzer:
         Returns dict with: tempo_ratio, backswing_frames, downswing_frames,
         head_stability, hip_rotation, shoulder_rotation, phases.
         """
-        if not self._pose:
+        if not self._detector:
             return None
 
         clip_path = self.clips_dir / filepath
@@ -151,10 +162,13 @@ class PoseAnalyzer:
                 break
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self._pose.process(rgb)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            # VIDEO mode requires a monotonically increasing timestamp in ms
+            timestamp_ms = int(frame_idx * (1000 / fps))
+            result = self._detector.detect_for_video(mp_image, timestamp_ms)
 
-            if results.pose_landmarks:
-                landmarks_per_frame.append((frame_idx, results.pose_landmarks.landmark))
+            if result.pose_landmarks:
+                landmarks_per_frame.append((frame_idx, result.pose_landmarks[0]))
             else:
                 landmarks_per_frame.append((frame_idx, None))
             frame_idx += 1
