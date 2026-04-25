@@ -39,15 +39,13 @@ _red()    { printf "\033[31m%s\033[0m\n" "$1"; }
 _yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
 
 _get_web_port() {
-    # Read web_port from config, default to 9555
-    if [ -f "$CONFIG_FILE" ] && command -v python3 &>/dev/null; then
-        python3 -c "
-import yaml, sys
-try:
-    cfg = yaml.safe_load(open('$CONFIG_FILE'))
-    print(cfg.get('server',{}).get('web_port', 9555))
-except: print(9555)
-" 2>/dev/null
+    # Read web_port from config with grep (no Python dependency)
+    if [ -f "$CONFIG_FILE" ]; then
+        grep -A1 '^server:' "$CONFIG_FILE" 2>/dev/null \
+            | grep 'web_port' \
+            | awk '{print $2}' \
+            | tr -d ' ' \
+            || echo "9555"
     else
         echo "9555"
     fi
