@@ -24,6 +24,12 @@ detection:
   # Region of interest (normalized 0.0-1.0, x, y, w, h)
   # Crop to just the hitting area to reduce false positives
   roi: null                   # null = full frame, or [0.2, 0.1, 0.6, 0.8]
+  # Confidence threshold for swing detection (0.0-1.0)
+  # Higher = fewer false positives, lower = more sensitive
+  confidence_threshold: 0.5
+  # Max duration (seconds) of a motion spike to count as a swing
+  # Sustained motion longer than this is rejected (walking, etc)
+  spike_max_seconds: 1.0
 
 clips:
   pre_seconds: 3              # Seconds before swing trigger to include

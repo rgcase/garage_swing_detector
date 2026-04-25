@@ -103,6 +103,8 @@ class SwingCamServer:
                 motion_area_pct=det_cfg["motion_area_pct"],
                 cooldown_seconds=det_cfg["cooldown_seconds"],
                 roi=det_cfg.get("roi"),
+                confidence_threshold=det_cfg.get("confidence_threshold", 0.5),
+                spike_max_seconds=det_cfg.get("spike_max_seconds", 1.0),
                 on_swing=self._on_swing_detected,
             )
 
@@ -121,6 +123,10 @@ class SwingCamServer:
         For single-camera: immediately create a swing record and save a clip.
         For multi-camera: correlate events within a time window.
         """
+        logger.info(
+            f"Swing event from {event.camera_name}: "
+            f"confidence={event.confidence:.2f} motion={event.motion_level:.1f}%"
+        )
         num_cameras = len(self.config["cameras"])
 
         if num_cameras == 1:
@@ -189,14 +195,26 @@ class SwingCamServer:
                     args=[event],
                 ).start()
 
+    # Single-camera events need higher confidence since there's
+    # no corroborating camera to back them up.
+    SINGLE_CAM_CONFIDENCE_MIN = 0.6
+
     def _flush_pending_event(self, event: SwingEvent):
         """
         If a pending event wasn't correlated within the time window,
-        save it as a single-camera swing.
+        save it as a single-camera swing — but require higher confidence.
         """
         with self._pending_lock:
             if event in self._pending_events:
                 self._pending_events.remove(event)
+
+                if event.confidence < self.SINGLE_CAM_CONFIDENCE_MIN:
+                    logger.info(
+                        f"Single-camera event from {event.camera_name} rejected: "
+                        f"confidence {event.confidence:.2f} < {self.SINGLE_CAM_CONFIDENCE_MIN} "
+                        f"(no corroboration from second camera)"
+                    )
+                    return
                 swing_id = self.db.generate_swing_id()
                 self.db.create_swing(swing_id, event.trigger_time)
                 self.gesture_detector.start_watching(swing_id)
