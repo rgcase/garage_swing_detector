@@ -1,0 +1,219 @@
+#!/bin/bash
+#
+# swingcam — CLI for managing the swing-cam server daemon on macOS.
+#
+# Usage:
+#   swingcam start        Start the server daemon
+#   swingcam stop         Stop the server daemon
+#   swingcam restart      Restart the server daemon
+#   swingcam status       Show daemon status and recent logs
+#   swingcam logs         Tail the server logs
+#   swingcam update [SHA] Pull latest main (or a specific SHA) and restart
+#
+
+set -euo pipefail
+
+# ── Configuration ──
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVER_DIR="$REPO_DIR/server"
+VENV_DIR="$SERVER_DIR/venv"
+PLIST_NAME="com.swingcam.server"
+PLIST_SRC="$SERVER_DIR/$PLIST_NAME.plist"
+PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
+LOG_FILE="$SERVER_DIR/logs/swingcam.log"
+ERR_FILE="$SERVER_DIR/logs/swingcam.err"
+
+# ── Helpers ──
+
+_green()  { printf "\033[32m%s\033[0m\n" "$1"; }
+_red()    { printf "\033[31m%s\033[0m\n" "$1"; }
+_yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
+
+_ensure_plist() {
+    if [ ! -f "$PLIST_DST" ]; then
+        mkdir -p "$(dirname "$PLIST_DST")"
+        cp "$PLIST_SRC" "$PLIST_DST"
+        echo "Installed plist to $PLIST_DST"
+    fi
+}
+
+_ensure_venv() {
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "Creating Python virtual environment..."
+        python3 -m venv "$VENV_DIR"
+        "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+        "$VENV_DIR/bin/pip" install --quiet -r "$SERVER_DIR/requirements.txt"
+        _green "Virtual environment created."
+    fi
+}
+
+_ensure_logs_dir() {
+    mkdir -p "$SERVER_DIR/logs"
+}
+
+_is_running() {
+    launchctl list "$PLIST_NAME" &>/dev/null
+}
+
+_pid() {
+    launchctl list "$PLIST_NAME" 2>/dev/null | head -1 | awk '{print $1}'
+}
+
+# ── Commands ──
+
+cmd_start() {
+    _ensure_venv
+    _ensure_logs_dir
+    _ensure_plist
+
+    if _is_running; then
+        local pid
+        pid=$(_pid)
+        if [ "$pid" != "-" ] && [ -n "$pid" ]; then
+            _yellow "swing-cam is already running (PID $pid)"
+            return 0
+        fi
+    fi
+
+    launchctl load "$PLIST_DST"
+    sleep 1
+
+    if _is_running; then
+        local pid
+        pid=$(_pid)
+        _green "swing-cam started (PID $pid)"
+        echo "  Web UI: http://localhost:8080"
+        echo "  Logs:   $LOG_FILE"
+    else
+        _red "Failed to start. Check logs:"
+        echo "  $ERR_FILE"
+        return 1
+    fi
+}
+
+cmd_stop() {
+    if ! _is_running; then
+        _yellow "swing-cam is not running."
+        return 0
+    fi
+
+    launchctl unload "$PLIST_DST"
+    sleep 1
+    _green "swing-cam stopped."
+}
+
+cmd_restart() {
+    echo "Restarting swing-cam..."
+    cmd_stop
+    cmd_start
+}
+
+cmd_status() {
+    echo "── swing-cam status ──"
+    if _is_running; then
+        local pid
+        pid=$(_pid)
+        if [ "$pid" != "-" ] && [ -n "$pid" ]; then
+            _green "Running (PID $pid)"
+        else
+            _yellow "Loaded but not running (may be restarting)"
+        fi
+    else
+        _red "Not running"
+    fi
+
+    echo ""
+    echo "── Git ──"
+    (cd "$REPO_DIR" && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git log --oneline -1)")
+
+    echo ""
+    echo "── Recent logs ──"
+    if [ -f "$LOG_FILE" ]; then
+        tail -15 "$LOG_FILE"
+    else
+        echo "(no log file yet)"
+    fi
+}
+
+cmd_logs() {
+    if [ ! -f "$LOG_FILE" ]; then
+        echo "No log file yet. Start the server first."
+        return 1
+    fi
+    tail -f "$LOG_FILE" "$ERR_FILE"
+}
+
+cmd_update() {
+    local target="${1:-main}"
+
+    echo "── Updating swing-cam ──"
+
+    # Fetch latest
+    (cd "$REPO_DIR" && git fetch origin)
+
+    if [ "$target" = "main" ]; then
+        echo "Pulling latest main..."
+        (cd "$REPO_DIR" && git checkout main && git pull origin main)
+    else
+        echo "Checking out $target..."
+        (cd "$REPO_DIR" && git checkout "$target")
+    fi
+
+    local commit
+    commit=$(cd "$REPO_DIR" && git log --oneline -1)
+    echo "Now at: $commit"
+
+    # Update dependencies
+    echo "Updating dependencies..."
+    "$VENV_DIR/bin/pip" install --quiet -r "$SERVER_DIR/requirements.txt"
+    _green "Dependencies updated."
+
+    # Restart if running
+    if _is_running; then
+        echo "Restarting server..."
+        cmd_restart
+    else
+        _yellow "Server not running. Start with: swingcam start"
+    fi
+
+    _green "Update complete."
+}
+
+cmd_help() {
+    cat <<'HELP'
+swingcam — manage the swing-cam server daemon
+
+Commands:
+  start           Start the server daemon
+  stop            Stop the server daemon
+  restart         Restart the server daemon
+  status          Show daemon status, git info, and recent logs
+  logs            Tail the server logs (Ctrl+C to stop)
+  update [SHA]    Pull latest main (or checkout a specific SHA) and restart
+
+First-time setup:
+  swingcam start
+
+This will create the Python venv, install dependencies, install the
+launchd plist, and start the server. The server will auto-start on
+boot after this.
+HELP
+}
+
+# ── Main ──
+
+case "${1:-help}" in
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    restart) cmd_restart ;;
+    status)  cmd_status ;;
+    logs)    cmd_logs ;;
+    update)  cmd_update "${2:-main}" ;;
+    help|--help|-h) cmd_help ;;
+    *)
+        _red "Unknown command: $1"
+        echo ""
+        cmd_help
+        exit 1
+        ;;
+esac

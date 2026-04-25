@@ -8,7 +8,6 @@
 
     <key>ProgramArguments</key>
     <array>
-        <!-- Update these paths to match your installation -->
         <string>/Users/ryancase/dev/garage_swing_detector/server/venv/bin/python</string>
         <string>/Users/ryancase/dev/garage_swing_detector/server/main.py</string>
     </array>
@@ -20,7 +19,11 @@
     <true/>
 
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <!-- Restart if it crashes, but respect manual stop -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 
     <key>StandardOutPath</key>
     <string>/Users/ryancase/dev/garage_swing_detector/server/logs/swingcam.log</string>
