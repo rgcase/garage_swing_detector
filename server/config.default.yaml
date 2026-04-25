@@ -1,4 +1,6 @@
 # swing-cam server configuration
+# This file lives at ~/.swingcam/config.yaml
+# Edit with: swingcam config
 
 server:
   host: "0.0.0.0"
@@ -40,8 +42,8 @@ detection:
 clips:
   pre_seconds: 3              # Seconds before swing trigger to include
   post_seconds: 6             # Seconds after swing trigger to include
-  output_dir: "./clips"       # Where to save swing clips (absolute or relative to server/)
-  format: "mp4"               # Output format
+  output_dir: "~/.swingcam/clips"
+  format: "mp4"
   # Max total disk usage for clips in MB. Oldest clips are deleted when exceeded.
   # Set to null for unlimited.
   max_storage_mb: null
@@ -55,9 +57,10 @@ correlation:
   window_seconds: 2.0
 
 database:
-  path: "./swings.db"         # SQLite database path (absolute or relative to server/)
+  path: "~/.swingcam/swings.db"
 
 logging:
   level: "INFO"               # DEBUG, INFO, WARNING, ERROR
+  log_dir: "~/.swingcam/logs"
   max_bytes: 10485760         # Max log file size in bytes (default 10MB)
   backup_count: 5             # Number of rotated log files to keep

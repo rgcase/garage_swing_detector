@@ -4,10 +4,9 @@ __pycache__/
 venv/
 .venv/
 
-# Project runtime
+# Project runtime (legacy, data now lives in ~/.swingcam/)
 clips/
 logs/
-server/models/
 *.db
 *.db-wal
 *.db-shm

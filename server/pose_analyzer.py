@@ -20,7 +20,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR = Path.home() / ".swingcam" / "models"
 POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
 POSE_MODEL_PATH = MODELS_DIR / "pose_landmarker_lite.task"
 

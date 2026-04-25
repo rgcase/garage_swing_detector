@@ -19,7 +19,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR = Path.home() / ".swingcam" / "models"
 HAND_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 HAND_MODEL_PATH = MODELS_DIR / "hand_landmarker.task"
 

@@ -28,6 +28,11 @@ LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
+def _expand_path(p: str) -> str:
+    """Expand ~ and make path absolute."""
+    return str(Path(p).expanduser().resolve())
+
+
 def _setup_logging(log_cfg: dict | None = None):
     log_cfg = log_cfg or {}
     level = getattr(logging, log_cfg.get("level", "INFO").upper(), logging.INFO)
@@ -42,8 +47,8 @@ def _setup_logging(log_cfg: dict | None = None):
     root.addHandler(console)
 
     # Rotating file log
-    log_dir = Path(__file__).parent / "logs"
-    log_dir.mkdir(exist_ok=True)
+    log_dir = Path(_expand_path(log_cfg.get("log_dir", "~/.swingcam/logs")))
+    log_dir.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
         log_dir / "swingcam.log",
         maxBytes=log_cfg.get("max_bytes", 10 * 1024 * 1024),
@@ -61,9 +66,9 @@ logger = logging.getLogger("swing-cam")
 class SwingCamServer:
     """Orchestrates all components."""
 
-    def __init__(self, config_path: str = "config.yaml"):
-        self._config_path = config_path
-        with open(config_path) as f:
+    def __init__(self, config_path: str = "~/.swingcam/config.yaml"):
+        self._config_path = _expand_path(config_path)
+        with open(self._config_path) as f:
             self.config = yaml.safe_load(f)
 
         # Set up logging from config (replaces the basic bootstrap logger)
@@ -75,13 +80,14 @@ class SwingCamServer:
         self._width = stream_cfg.get("width", 1280)
         self._height = stream_cfg.get("height", 720)
 
-        self.db = SwingDB(
-            self.config["database"]["path"],
-            clips_dir=self.config["clips"]["output_dir"],
-        )
+        # Expand ~ in data paths
+        self._db_path = _expand_path(self.config["database"]["path"])
+        self._clips_dir = _expand_path(self.config["clips"]["output_dir"])
+
+        self.db = SwingDB(self._db_path, clips_dir=self._clips_dir)
         clips_cfg = self.config["clips"]
         self.clip_saver = ClipSaver(
-            output_dir=clips_cfg["output_dir"],
+            output_dir=self._clips_dir,
             pre_seconds=clips_cfg["pre_seconds"],
             post_seconds=clips_cfg["post_seconds"],
             fps=self._fps,
@@ -102,7 +108,7 @@ class SwingCamServer:
 
         # Pose analysis (runs offline on saved clips)
         self.pose_analyzer = PoseAnalyzer(
-            clips_dir=self.config["clips"]["output_dir"],
+            clips_dir=self._clips_dir,
         )
         self.pose_analyzer.on_analysis = self._on_analysis_complete
 
@@ -322,7 +328,7 @@ class SwingCamServer:
         web_cfg = self.config["server"]
         app = create_app(
             self.db,
-            self.config["clips"]["output_dir"],
+            self._clips_dir,
             receivers=self.receivers,
             buffers=self.buffers,
             detectors=self.detectors,
@@ -355,9 +361,21 @@ class SwingCamServer:
 
 
 def main():
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    # Support: python main.py --config /path/to/config.yaml
+    # or:     python main.py /path/to/config.yaml (legacy)
+    config_path = "~/.swingcam/config.yaml"
+    args = sys.argv[1:]
+    if "--config" in args:
+        idx = args.index("--config")
+        if idx + 1 < len(args):
+            config_path = args[idx + 1]
+    elif args and not args[0].startswith("-"):
+        config_path = args[0]
+
+    config_path = _expand_path(config_path)
     if not Path(config_path).exists():
         logger.error(f"Config file not found: {config_path}")
+        logger.error("Run 'swingcam start' to create the default config at ~/.swingcam/config.yaml")
         sys.exit(1)
 
     server = SwingCamServer(config_path)

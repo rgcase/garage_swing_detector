@@ -9,19 +9,24 @@
 #   swingcam status       Show daemon status and recent logs
 #   swingcam logs         Tail the server logs
 #   swingcam update [SHA] Pull latest main (or a specific SHA) and restart
+#   swingcam config       Open the config file in $EDITOR
 #
 
 set -euo pipefail
 
-# ── Configuration ──
+# ── Paths ──
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_DIR="$REPO_DIR/server"
 VENV_DIR="$SERVER_DIR/venv"
+
+APP_DIR="$HOME/.swingcam"
+CONFIG_FILE="$APP_DIR/config.yaml"
+LOG_DIR="$APP_DIR/logs"
+LOG_FILE="$LOG_DIR/swingcam.log"
+ERR_FILE="$LOG_DIR/swingcam.err"
+
 PLIST_NAME="com.swingcam.server"
-PLIST_SRC="$SERVER_DIR/$PLIST_NAME.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
-LOG_FILE="$SERVER_DIR/logs/swingcam.log"
-ERR_FILE="$SERVER_DIR/logs/swingcam.err"
 
 # ── Helpers ──
 
@@ -29,12 +34,65 @@ _green()  { printf "\033[32m%s\033[0m\n" "$1"; }
 _red()    { printf "\033[31m%s\033[0m\n" "$1"; }
 _yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
 
-_ensure_plist() {
-    if [ ! -f "$PLIST_DST" ]; then
-        mkdir -p "$(dirname "$PLIST_DST")"
-        cp "$PLIST_SRC" "$PLIST_DST"
-        echo "Installed plist to $PLIST_DST"
+_ensure_app_dir() {
+    if [ ! -d "$APP_DIR" ]; then
+        echo "Creating $APP_DIR..."
+        mkdir -p "$APP_DIR/clips" "$APP_DIR/logs" "$APP_DIR/models"
     fi
+
+    # Copy default config if none exists
+    if [ ! -f "$CONFIG_FILE" ]; then
+        cp "$SERVER_DIR/config.default.yaml" "$CONFIG_FILE"
+        echo "Created config at $CONFIG_FILE"
+        echo "Edit it with: swingcam config"
+    fi
+}
+
+_ensure_plist() {
+    # Generate the plist dynamically so paths are always correct
+    cat > "$PLIST_DST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$PLIST_NAME</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$VENV_DIR/bin/python</string>
+        <string>$SERVER_DIR/main.py</string>
+        <string>--config</string>
+        <string>$CONFIG_FILE</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>$SERVER_DIR</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+
+    <key>StandardErrorPath</key>
+    <string>$ERR_FILE</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+PLIST
 }
 
 _ensure_venv() {
@@ -45,10 +103,6 @@ _ensure_venv() {
         "$VENV_DIR/bin/pip" install --quiet -r "$SERVER_DIR/requirements.txt"
         _green "Virtual environment created."
     fi
-}
-
-_ensure_logs_dir() {
-    mkdir -p "$SERVER_DIR/logs"
 }
 
 _is_running() {
@@ -62,8 +116,8 @@ _pid() {
 # ── Commands ──
 
 cmd_start() {
+    _ensure_app_dir
     _ensure_venv
-    _ensure_logs_dir
     _ensure_plist
 
     if _is_running; then
@@ -82,8 +136,10 @@ cmd_start() {
         local pid
         pid=$(_pid)
         _green "swing-cam started (PID $pid)"
-        echo "  Web UI: http://localhost:8080"
-        echo "  Logs:   $LOG_FILE"
+        echo "  Web UI:  http://localhost:8080"
+        echo "  Config:  $CONFIG_FILE"
+        echo "  Clips:   $APP_DIR/clips"
+        echo "  Logs:    $LOG_FILE"
     else
         _red "Failed to start. Check logs:"
         echo "  $ERR_FILE"
@@ -123,23 +179,33 @@ cmd_status() {
     fi
 
     echo ""
+    echo "── Paths ──"
+    echo "Config:  $CONFIG_FILE"
+    echo "Clips:   $APP_DIR/clips"
+    echo "DB:      $APP_DIR/swings.db"
+    echo "Logs:    $LOG_DIR"
+
+    echo ""
     echo "── Git ──"
     (cd "$REPO_DIR" && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git log --oneline -1)")
 
     echo ""
-    echo "── Logs ──"
-    if [ -d "$SERVER_DIR/logs" ]; then
-        local total
-        total=$(du -sh "$SERVER_DIR/logs" 2>/dev/null | awk '{print $1}')
-        local count
-        count=$(ls "$SERVER_DIR/logs"/swingcam.log* 2>/dev/null | wc -l | tr -d ' ')
-        echo "Size: $total ($count files, rotates at 10MB, keeps 5 backups)"
-        echo ""
-        echo "Recent:"
-        tail -10 "$LOG_FILE" 2>/dev/null || echo "(no log file yet)"
-    else
-        echo "(no logs yet)"
+    echo "── Storage ──"
+    if [ -d "$APP_DIR/clips" ]; then
+        local clips_size clips_count
+        clips_size=$(du -sh "$APP_DIR/clips" 2>/dev/null | awk '{print $1}')
+        clips_count=$(find "$APP_DIR/clips" -name "*.mp4" 2>/dev/null | wc -l | tr -d ' ')
+        echo "Clips: $clips_size ($clips_count files)"
     fi
+    if [ -d "$LOG_DIR" ]; then
+        local log_size
+        log_size=$(du -sh "$LOG_DIR" 2>/dev/null | awk '{print $1}')
+        echo "Logs:  $log_size (rotates at 10MB, keeps 5 backups)"
+    fi
+
+    echo ""
+    echo "── Recent logs ──"
+    tail -10 "$LOG_FILE" 2>/dev/null || echo "(no log file yet)"
 }
 
 cmd_logs() {
@@ -148,6 +214,20 @@ cmd_logs() {
         return 1
     fi
     tail -f "$LOG_FILE" "$ERR_FILE"
+}
+
+cmd_config() {
+    _ensure_app_dir
+    "${EDITOR:-vi}" "$CONFIG_FILE"
+    if _is_running; then
+        echo ""
+        read -rp "Config changed. Restart server? [y/N] " answer
+        if [[ "$answer" =~ ^[Yy] ]]; then
+            cmd_restart
+        else
+            _yellow "Restart manually with: swingcam restart"
+        fi
+    fi
 }
 
 cmd_update() {
@@ -175,6 +255,9 @@ cmd_update() {
     "$VENV_DIR/bin/pip" install --quiet -r "$SERVER_DIR/requirements.txt"
     _green "Dependencies updated."
 
+    # Regenerate plist in case paths changed
+    _ensure_plist
+
     # Restart if running
     if _is_running; then
         echo "Restarting server..."
@@ -187,23 +270,27 @@ cmd_update() {
 }
 
 cmd_help() {
-    cat <<'HELP'
+    cat <<HELP
 swingcam — manage the swing-cam server daemon
 
 Commands:
   start           Start the server daemon
   stop            Stop the server daemon
   restart         Restart the server daemon
-  status          Show daemon status, git info, and recent logs
+  status          Show daemon status, paths, storage, and recent logs
   logs            Tail the server logs (Ctrl+C to stop)
+  config          Edit the config file (restarts server if running)
   update [SHA]    Pull latest main (or checkout a specific SHA) and restart
+
+Data directory: $APP_DIR
+  config.yaml     Server configuration
+  clips/          Saved swing clips
+  swings.db       Swing database
+  logs/           Rotated log files
+  models/         MediaPipe model files (auto-downloaded)
 
 First-time setup:
   swingcam start
-
-This will create the Python venv, install dependencies, install the
-launchd plist, and start the server. The server will auto-start on
-boot after this.
 HELP
 }
 
@@ -215,6 +302,7 @@ case "${1:-help}" in
     restart) cmd_restart ;;
     status)  cmd_status ;;
     logs)    cmd_logs ;;
+    config)  cmd_config ;;
     update)  cmd_update "${2:-main}" ;;
     help|--help|-h) cmd_help ;;
     *)
