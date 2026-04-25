@@ -6,6 +6,7 @@ database, and the web UI.
 """
 
 import logging
+import logging.handlers
 import signal
 import sys
 import threading
@@ -23,11 +24,33 @@ from stream_receiver import CircularFrameBuffer, StreamReceiver
 from swing_detector import SwingDetector, SwingEvent
 from web import create_app
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
+LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _setup_logging():
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
+
+    # Always log to console (for manual runs and launchd stdout capture)
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    # Rotating file log: 10 MB per file, keep 5 backups (50 MB total max)
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_dir / "swingcam.log",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+    )
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+
+
+_setup_logging()
 logger = logging.getLogger("swing-cam")
 
 

@@ -127,11 +127,18 @@ cmd_status() {
     (cd "$REPO_DIR" && echo "Branch: $(git branch --show-current)" && echo "Commit: $(git log --oneline -1)")
 
     echo ""
-    echo "── Recent logs ──"
-    if [ -f "$LOG_FILE" ]; then
-        tail -15 "$LOG_FILE"
+    echo "── Logs ──"
+    if [ -d "$SERVER_DIR/logs" ]; then
+        local total
+        total=$(du -sh "$SERVER_DIR/logs" 2>/dev/null | awk '{print $1}')
+        local count
+        count=$(ls "$SERVER_DIR/logs"/swingcam.log* 2>/dev/null | wc -l | tr -d ' ')
+        echo "Size: $total ($count files, rotates at 10MB, keeps 5 backups)"
+        echo ""
+        echo "Recent:"
+        tail -10 "$LOG_FILE" 2>/dev/null || echo "(no log file yet)"
     else
-        echo "(no log file yet)"
+        echo "(no logs yet)"
     fi
 }
 
