@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>swing-cam | Calibrate ROI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; padding: 1.5rem; }
+        h1 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+        a { color: #4ade80; text-decoration: none; }
+
+        .camera-select { margin-bottom: 1rem; }
+        .camera-select button {
+            padding: 0.4rem 1rem; margin-right: 0.5rem;
+            background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+            color: #e0e0e0; cursor: pointer; font-size: 0.85rem;
+        }
+        .camera-select button.active { border-color: #4ade80; color: #4ade80; }
+        .camera-select button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .canvas-wrap {
+            position: relative; display: inline-block;
+            border: 1px solid #333; border-radius: 8px; overflow: hidden;
+            max-width: 100%;
+        }
+        canvas { display: block; max-width: 100%; cursor: crosshair; }
+
+        .controls { margin-top: 1rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+        .controls button {
+            padding: 0.5rem 1.2rem; border-radius: 6px;
+            border: 1px solid #333; background: #1a1a1a; color: #e0e0e0;
+            cursor: pointer; font-size: 0.85rem;
+        }
+        .controls button.primary { border-color: #4ade80; color: #4ade80; }
+        .controls button.danger { border-color: #f87171; color: #f87171; }
+        .controls button:hover { background: #222; }
+
+        .roi-info { color: #888; font-size: 0.8rem; font-family: monospace; }
+        .status { margin-top: 0.75rem; font-size: 0.85rem; min-height: 1.2em; }
+        .status.ok { color: #4ade80; }
+        .status.err { color: #f87171; }
+    </style>
+</head>
+<body>
+    <h1>Calibrate ROI</h1>
+    <p class="subtitle">Draw a rectangle over the hitting area to reduce false positives. <a href="/">&larr; Back</a></p>
+
+    <div class="camera-select">
+        {% for cam in cameras %}
+        <button onclick="selectCamera('{{ cam.name }}')"
+                id="cam-btn-{{ cam.name }}"
+                {% if not cam.connected %}disabled title="Camera offline"{% endif %}>
+            {{ cam.name }}
+        </button>
+        {% endfor %}
+    </div>
+
+    <div class="canvas-wrap">
+        <canvas id="roi-canvas" width="1280" height="720"></canvas>
+    </div>
+
+    <div class="controls">
+        <button class="primary" onclick="saveROI()">Save ROI</button>
+        <button class="danger" onclick="clearROI()">Clear ROI (full frame)</button>
+        <button onclick="refreshSnapshot()">Refresh Snapshot</button>
+        <span class="roi-info" id="roi-info">No ROI selected</span>
+    </div>
+    <div class="status" id="status"></div>
+
+    <script>
+    const canvas = document.getElementById('roi-canvas');
+    const ctx = canvas.getContext('2d');
+    const roiInfo = document.getElementById('roi-info');
+    const statusEl = document.getElementById('status');
+
+    let currentCamera = null;
+    let bgImage = null;
+
+    // ROI drawing state
+    let drawing = false;
+    let startX = 0, startY = 0;
+    let roi = null; // {x, y, w, h} in normalized 0-1
+
+    // Load existing ROI
+    const existingROI = {{ current_roi | tojson }};
+    if (existingROI) {
+        roi = { x: existingROI[0], y: existingROI[1], w: existingROI[2], h: existingROI[3] };
+    }
+
+    function selectCamera(name) {
+        document.querySelectorAll('.camera-select button').forEach(b => b.classList.remove('active'));
+        document.getElementById('cam-btn-' + name).classList.add('active');
+        currentCamera = name;
+        refreshSnapshot();
+    }
+
+    async function refreshSnapshot() {
+        if (!currentCamera) return;
+        try {
+            const resp = await fetch('/api/snapshot/' + currentCamera);
+            if (!resp.ok) throw new Error(await resp.text());
+            const blob = await resp.blob();
+            bgImage = new Image();
+            bgImage.onload = () => {
+                canvas.width = bgImage.width;
+                canvas.height = bgImage.height;
+                redraw();
+            };
+            bgImage.src = URL.createObjectURL(blob);
+        } catch (e) {
+            showStatus('Failed to load snapshot: ' + e.message, true);
+        }
+    }
+
+    function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (bgImage) ctx.drawImage(bgImage, 0, 0);
+        if (roi) {
+            const px = roi.x * canvas.width;
+            const py = roi.y * canvas.height;
+            const pw = roi.w * canvas.width;
+            const ph = roi.h * canvas.height;
+            ctx.strokeStyle = '#4ade80';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 3]);
+            ctx.strokeRect(px, py, pw, ph);
+            ctx.setLineDash([]);
+            ctx.fillStyle = 'rgba(74, 222, 128, 0.1)';
+            ctx.fillRect(px, py, pw, ph);
+            roiInfo.textContent = `ROI: x=${roi.x.toFixed(3)} y=${roi.y.toFixed(3)} w=${roi.w.toFixed(3)} h=${roi.h.toFixed(3)}`;
+        } else {
+            roiInfo.textContent = 'No ROI selected (using full frame)';
+        }
+    }
+
+    function getCanvasCoords(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        return {
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top) * scaleY,
+        };
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        const c = getCanvasCoords(e);
+        startX = c.x; startY = c.y;
+        drawing = true;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!drawing) return;
+        const c = getCanvasCoords(e);
+        const x = Math.min(startX, c.x);
+        const y = Math.min(startY, c.y);
+        const w = Math.abs(c.x - startX);
+        const h = Math.abs(c.y - startY);
+        roi = {
+            x: x / canvas.width,
+            y: y / canvas.height,
+            w: w / canvas.width,
+            h: h / canvas.height,
+        };
+        redraw();
+    });
+
+    canvas.addEventListener('mouseup', () => { drawing = false; });
+
+    // Touch support for mobile
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const t = e.touches[0];
+        const c = getCanvasCoords(t);
+        startX = c.x; startY = c.y;
+        drawing = true;
+    });
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        if (!drawing) return;
+        const t = e.touches[0];
+        const c = getCanvasCoords(t);
+        const x = Math.min(startX, c.x);
+        const y = Math.min(startY, c.y);
+        const w = Math.abs(c.x - startX);
+        const h = Math.abs(c.y - startY);
+        roi = {
+            x: x / canvas.width,
+            y: y / canvas.height,
+            w: w / canvas.width,
+            h: h / canvas.height,
+        };
+        redraw();
+    });
+    canvas.addEventListener('touchend', () => { drawing = false; });
+
+    async function saveROI() {
+        if (!currentCamera || !roi) {
+            showStatus('Select a camera and draw an ROI first', true);
+            return;
+        }
+        try {
+            const resp = await fetch('/api/roi/' + currentCamera, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(roi),
+            });
+            const data = await resp.json();
+            if (data.ok) showStatus('ROI saved and applied live!', false);
+            else showStatus('Failed to save ROI', true);
+        } catch (e) {
+            showStatus('Error: ' + e.message, true);
+        }
+    }
+
+    async function clearROI() {
+        try {
+            const resp = await fetch('/api/roi', { method: 'DELETE' });
+            const data = await resp.json();
+            if (data.ok) {
+                roi = null;
+                redraw();
+                showStatus('ROI cleared (using full frame)', false);
+            }
+        } catch (e) {
+            showStatus('Error: ' + e.message, true);
+        }
+    }
+
+    function showStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.className = 'status ' + (isError ? 'err' : 'ok');
+        setTimeout(() => { statusEl.textContent = ''; }, 4000);
+    }
+
+    // Auto-select the first connected camera
+    {% for cam in cameras %}
+    {% if cam.connected %}
+    selectCamera('{{ cam.name }}');
+    {% endif %}
+    {% endfor %}
+
+    // If we have an existing ROI, draw it once the page loads
+    if (roi) redraw();
+    </script>
+</body>
+</html>

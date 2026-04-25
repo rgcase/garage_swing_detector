@@ -1,17 +1,15 @@
 """
 Clip saver: when a swing is detected, waits for the post-swing
 buffer to fill, then extracts the relevant frames from the
-circular buffer and writes them as an MP4 file via OpenCV.
+circular buffer and writes them as an H.264 MP4 file via FFmpeg.
 """
 
 import logging
-import os
+import subprocess
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
-
-import cv2
 
 from stream_receiver import CircularFrameBuffer, TimestampedFrame
 
@@ -76,23 +74,42 @@ class ClipSaver:
         filename = f"swing_{timestamp_str}_{camera_name}.mp4"
         filepath = self.output_dir / filename
 
-        # Write MP4
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(
-            str(filepath), fourcc, self.fps, (self.width, self.height)
+        # Write H.264 MP4 via FFmpeg (plays in Safari/iOS unlike mp4v)
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{self.width}x{self.height}",
+            "-r", str(self.fps),
+            "-i", "-",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(filepath),
+        ]
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
-
         for tf in frames:
-            writer.write(tf.frame)
+            proc.stdin.write(tf.frame.tobytes())
+        proc.stdin.close()
+        proc.wait()
 
-        writer.release()
+        if proc.returncode != 0:
+            stderr = proc.stderr.read().decode(errors="replace")
+            logger.error(f"[{camera_name}] FFmpeg clip encode failed: {stderr}")
+            return None
 
         duration = frames[-1].timestamp - frames[0].timestamp
         logger.info(
             f"[{camera_name}] Saved {filepath.name} "
             f"({len(frames)} frames, {duration:.1f}s)"
         )
-        return str(filepath)
+        return filename
 
     def save_clip_async(
         self,

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>swing-cam | Motion Debug</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; padding: 1.5rem; }
+        h1 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+        a { color: #4ade80; text-decoration: none; }
+
+        .camera-select { margin-bottom: 1rem; }
+        .camera-select button {
+            padding: 0.4rem 1rem; margin-right: 0.5rem;
+            background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+            color: #e0e0e0; cursor: pointer; font-size: 0.85rem;
+        }
+        .camera-select button.active { border-color: #4ade80; color: #4ade80; }
+
+        .chart-container {
+            background: #111; border: 1px solid #222; border-radius: 8px;
+            padding: 1rem; max-width: 900px;
+        }
+        .stats-bar {
+            display: flex; gap: 2rem; margin-top: 1rem;
+            font-size: 0.85rem; color: #888;
+        }
+        .stats-bar span { color: #e0e0e0; }
+    </style>
+</head>
+<body>
+    <h1>Motion Debug</h1>
+    <p class="subtitle">Real-time motion level graph for tuning detection thresholds. <a href="/">&larr; Back</a></p>
+
+    <div class="camera-select">
+        {% for cam in cameras %}
+        <button onclick="selectCamera('{{ cam.name }}')" id="cam-btn-{{ cam.name }}">
+            {{ cam.name }}
+        </button>
+        {% endfor %}
+    </div>
+
+    <div class="chart-container">
+        <canvas id="motion-chart" height="250"></canvas>
+    </div>
+
+    <div class="stats-bar">
+        <div>Current: <span id="current-val">--</span>%</div>
+        <div>Peak: <span id="peak-val">--</span>%</div>
+        <div>Threshold: <span id="threshold-val">--</span>%</div>
+    </div>
+
+    <script>
+    let currentCamera = null;
+    let pollInterval = null;
+    let threshold = 1.5;
+    let peakMotion = 0;
+
+    const ctx = document.getElementById('motion-chart').getContext('2d');
+    const chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Motion %',
+                    data: [],
+                    borderColor: '#4ade80',
+                    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+                    fill: true,
+                    pointRadius: 0,
+                    borderWidth: 1.5,
+                    tension: 0.2,
+                },
+                {
+                    label: 'Threshold',
+                    data: [],
+                    borderColor: '#f87171',
+                    borderDash: [5, 5],
+                    pointRadius: 0,
+                    borderWidth: 1,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            animation: false,
+            scales: {
+                x: {
+                    display: true,
+                    ticks: { color: '#555', maxTicksLimit: 10 },
+                    grid: { color: '#1a1a1a' },
+                },
+                y: {
+                    display: true,
+                    min: 0,
+                    ticks: { color: '#555' },
+                    grid: { color: '#1a1a1a' },
+                    title: { display: true, text: 'Motion %', color: '#555' },
+                },
+            },
+            plugins: {
+                legend: { display: false },
+            },
+        },
+    });
+
+    function selectCamera(name) {
+        document.querySelectorAll('.camera-select button').forEach(b => b.classList.remove('active'));
+        document.getElementById('cam-btn-' + name).classList.add('active');
+        currentCamera = name;
+        peakMotion = 0;
+        if (pollInterval) clearInterval(pollInterval);
+        fetchMotion();
+        pollInterval = setInterval(fetchMotion, 1000);
+    }
+
+    async function fetchMotion() {
+        if (!currentCamera) return;
+        try {
+            const resp = await fetch('/api/motion/' + currentCamera);
+            const data = await resp.json();
+            threshold = data.threshold;
+
+            const points = data.motion.slice(-300);
+            const labels = points.map((p, i) => {
+                const ago = ((points[points.length - 1].t - p.t)).toFixed(1);
+                return '-' + ago + 's';
+            });
+            const values = points.map(p => p.pct);
+            const threshLine = points.map(() => threshold);
+
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = values;
+            chart.data.datasets[1].data = threshLine;
+            chart.update();
+
+            const current = values.length > 0 ? values[values.length - 1] : 0;
+            peakMotion = Math.max(peakMotion, ...values);
+            document.getElementById('current-val').textContent = current.toFixed(1);
+            document.getElementById('peak-val').textContent = peakMotion.toFixed(1);
+            document.getElementById('threshold-val').textContent = threshold.toFixed(1);
+        } catch (e) {
+            console.error('Motion fetch error:', e);
+        }
+    }
+
+    // Auto-select first camera
+    {% for cam in cameras %}
+    {% if loop.first %}
+    selectCamera('{{ cam.name }}');
+    {% endif %}
+    {% endfor %}
+    </script>
+</body>
+</html>

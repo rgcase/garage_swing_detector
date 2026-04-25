@@ -93,6 +93,11 @@ class StreamReceiver:
         self._running = False
         self._on_frame_callbacks: list = []
 
+    @property
+    def is_connected(self) -> bool:
+        """True if FFmpeg is running and receiving frames."""
+        return self._running and self._process is not None
+
     def on_frame(self, callback):
         """Register a callback that receives each decoded TimestampedFrame."""
         self._on_frame_callbacks.append(callback)

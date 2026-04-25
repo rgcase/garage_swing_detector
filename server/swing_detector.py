@@ -10,7 +10,9 @@ stillness (address and finish positions). We detect this by:
 3. Compute absolute difference between consecutive frames
 4. Threshold to get binary motion mask
 5. Calculate % of ROI pixels that are "moving"
-6. Trigger when motion exceeds threshold, with cooldown
+6. Require a temporal pattern: still (1s+) → motion spike → still
+   This eliminates false positives from walking/continuous motion.
+7. Trigger with cooldown enforcement
 
 This works extremely well in a controlled environment like a garage
 with consistent lighting and static background.
@@ -18,6 +20,7 @@ with consistent lighting and static background.
 
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import cv2
@@ -37,7 +40,13 @@ class SwingEvent:
 
 
 class SwingDetector:
-    """Per-camera swing detector using frame differencing."""
+    """Per-camera swing detector using frame differencing with
+    temporal pattern matching (still → spike → still)."""
+
+    # How long the scene must be still before a spike counts as a swing
+    STILL_REQUIRED_SECONDS = 1.0
+    # Motion pct below this is considered "still"
+    STILL_THRESHOLD_FACTOR = 0.3  # 30% of motion_area_pct
 
     def __init__(
         self,
@@ -58,6 +67,25 @@ class SwingDetector:
         self._prev_gray: np.ndarray | None = None
         self._last_trigger_time: float = 0
         self._analysis_scale = 0.25  # Process at 1/4 resolution for speed
+
+        # Temporal pattern: track recent motion levels for still→spike detection
+        # Each entry is (timestamp, motion_pct)
+        self._motion_history: deque[tuple[float, float]] = deque(maxlen=120)  # ~4s at 30fps
+        self._still_threshold = self.motion_area_pct * self.STILL_THRESHOLD_FACTOR
+
+        # Rolling motion data exposed for the debug dashboard
+        self.recent_motion: deque[tuple[float, float]] = deque(maxlen=300)  # ~10s
+
+    def _was_still_before(self, now: float) -> bool:
+        """Check if scene was still for STILL_REQUIRED_SECONDS before now."""
+        cutoff = now - self.STILL_REQUIRED_SECONDS
+        still_samples = [
+            pct for ts, pct in self._motion_history
+            if ts < now and ts >= cutoff
+        ]
+        if len(still_samples) < 5:  # need enough samples to judge
+            return False
+        return all(pct < self._still_threshold for pct in still_samples)
 
     def process_frame(self, tf: TimestampedFrame):
         """Called for each new frame. Checks for swing-like motion."""
@@ -97,11 +125,15 @@ class SwingDetector:
         total_pixels = thresh.size
         motion_pct = (motion_pixels / total_pixels) * 100
 
-        # Check trigger conditions
+        # Track motion history for temporal pattern matching
+        self._motion_history.append((tf.timestamp, motion_pct))
+        self.recent_motion.append((tf.timestamp, motion_pct))
+
+        # Check trigger: motion spike AND was still before the spike
         if motion_pct >= self.motion_area_pct:
             now = tf.timestamp
             elapsed = now - self._last_trigger_time
-            if elapsed >= self.cooldown_seconds:
+            if elapsed >= self.cooldown_seconds and self._was_still_before(now):
                 self._last_trigger_time = now
                 event = SwingEvent(
                     trigger_time=now,

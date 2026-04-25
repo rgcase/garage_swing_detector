@@ -20,8 +20,9 @@ class SwingRecord:
 
 
 class SwingDB:
-    def __init__(self, db_path: str = "./swings.db"):
+    def __init__(self, db_path: str = "./swings.db", clips_dir: str = "./clips"):
         self.db_path = db_path
+        self.clips_dir = Path(clips_dir)
         self._local = threading.local()
         self._init_db()
 
@@ -55,6 +56,22 @@ class SwingDB:
 
             CREATE INDEX IF NOT EXISTS idx_swings_timestamp ON swings(timestamp);
             CREATE INDEX IF NOT EXISTS idx_clips_swing_id ON clips(swing_id);
+
+            CREATE TABLE IF NOT EXISTS swing_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                swing_id TEXT NOT NULL REFERENCES swings(id),
+                camera_name TEXT NOT NULL,
+                tempo_ratio REAL,
+                backswing_frames INTEGER,
+                downswing_frames INTEGER,
+                head_stability REAL,
+                hip_rotation REAL,
+                shoulder_rotation REAL,
+                phases_json TEXT,
+                landmarks_summary TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_analysis_swing ON swing_analysis(swing_id);
         """)
         conn.commit()
         conn.close()
@@ -101,7 +118,7 @@ class SwingDB:
         ).fetchall()
         for clip in clips:
             if clip["filepath"]:
-                path = Path(clip["filepath"])
+                path = self.clips_dir / clip["filepath"]
                 if path.exists():
                     path.unlink()
 
@@ -175,3 +192,33 @@ class SwingDB:
             "bad": bad,
             "untagged": untagged,
         }
+
+    def save_analysis(
+        self,
+        swing_id: str,
+        camera_name: str,
+        tempo_ratio: float | None,
+        backswing_frames: int | None,
+        downswing_frames: int | None,
+        head_stability: float | None,
+        hip_rotation: float | None,
+        shoulder_rotation: float | None,
+        phases_json: str | None,
+    ):
+        self._conn.execute(
+            """INSERT INTO swing_analysis
+               (swing_id, camera_name, tempo_ratio, backswing_frames,
+                downswing_frames, head_stability, hip_rotation,
+                shoulder_rotation, phases_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (swing_id, camera_name, tempo_ratio, backswing_frames,
+             downswing_frames, head_stability, hip_rotation,
+             shoulder_rotation, phases_json),
+        )
+        self._conn.commit()
+
+    def get_analysis(self, swing_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM swing_analysis WHERE swing_id = ?", (swing_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]

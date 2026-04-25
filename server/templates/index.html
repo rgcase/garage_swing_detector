@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0a0a">
     <title>swing-cam</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,9 +59,27 @@
         .swing-videos {
             display: flex; gap: 0; flex-wrap: wrap;
         }
-        .swing-videos video {
-            flex: 1; min-width: 300px; max-height: 400px;
+        .video-wrap {
+            flex: 1; min-width: 300px; position: relative;
+        }
+        .video-wrap video {
+            width: 100%; max-height: 400px;
             background: #000; display: block;
+        }
+        .video-label {
+            position: absolute; top: 8px; left: 8px;
+            background: rgba(0,0,0,0.7); color: #aaa;
+            padding: 2px 8px; border-radius: 4px;
+            font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+        }
+
+        @media (max-width: 768px) {
+            header { flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+            .video-wrap { min-width: 100%; }
+            .swing-actions { flex-wrap: wrap; }
+            .notes-input { margin-left: 0; margin-top: 0.5rem; width: 100%; }
+            .swing-list { padding: 0.75rem; }
+            .filters { padding: 0.75rem; }
         }
 
         .swing-actions {
@@ -94,6 +115,59 @@
         .notes-input::placeholder { color: #444; }
         .notes-input:focus { outline: none; border-color: #555; }
 
+        .camera-status {
+            display: flex; gap: 0.75rem;
+        }
+        .cam-badge {
+            display: flex; align-items: center; gap: 0.4rem;
+            padding: 0.3rem 0.7rem; border-radius: 6px;
+            font-size: 0.8rem; border: 1px solid #333;
+        }
+        .cam-badge.connected { border-color: #2d5a2d; color: #4ade80; }
+        .cam-badge.disconnected { border-color: #333; color: #555; }
+        .cam-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block;
+        }
+        .cam-badge.connected .cam-dot { background: #4ade80; }
+        .cam-badge.disconnected .cam-dot { background: #555; }
+        .cam-frames { font-size: 0.7rem; color: #666; margin-left: 0.2rem; }
+        .cam-badge.connected .cam-frames { color: #4ade80; opacity: 0.7; }
+
+        .analysis-toggle {
+            padding: 0.4rem 0.8rem; border: none; background: none;
+            color: #555; cursor: pointer; font-size: 0.8rem;
+        }
+        .analysis-toggle:hover { color: #aaa; }
+        .analysis-panel {
+            display: none; padding: 0.8rem 1.2rem;
+            border-top: 1px solid #1a1a1a; font-size: 0.8rem;
+        }
+        .analysis-panel.open { display: block; }
+        .metrics-grid {
+            display: flex; gap: 1.5rem; flex-wrap: wrap;
+        }
+        .metric {
+            display: flex; flex-direction: column; gap: 0.2rem;
+        }
+        .metric .label { color: #666; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .metric .value { color: #e0e0e0; font-size: 1.1rem; font-weight: 500; }
+        .phase-bar {
+            display: flex; height: 6px; border-radius: 3px; overflow: hidden;
+            margin-top: 0.75rem; width: 100%;
+        }
+        .phase-bar .segment { height: 100%; }
+        .phase-bar .address { background: #555; }
+        .phase-bar .backswing { background: #3b82f6; }
+        .phase-bar .top { background: #f59e0b; }
+        .phase-bar .downswing { background: #ef4444; }
+        .phase-bar .impact { background: #f59e0b; }
+        .phase-bar .follow_through { background: #4ade80; }
+        .phase-labels {
+            display: flex; font-size: 0.65rem; color: #666; margin-top: 0.2rem;
+        }
+        .phase-labels span { text-align: center; }
+
         .empty-state {
             text-align: center; padding: 4rem 2rem; color: #555;
         }
@@ -103,6 +177,19 @@
 <body>
     <header>
         <h1>⛳ swing-cam</h1>
+        <div class="camera-status">
+            {% for cam in cameras %}
+            <div class="cam-badge {{ 'connected' if cam.connected else 'disconnected' }}">
+                <span class="cam-dot"></span>
+                {{ cam.name }}
+                {% if cam.connected %}
+                    <span class="cam-frames">{{ cam.frame_count }} frames</span>
+                {% else %}
+                    <span class="cam-frames">offline</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
         <div class="stats">
             Total: <span>{{ stats.total }}</span>
             Good: <span style="color:#4ade80">{{ stats.good }}</span>
@@ -110,6 +197,11 @@
             Untagged: <span>{{ stats.untagged }}</span>
         </div>
     </header>
+    <nav style="padding:0.5rem 2rem;border-bottom:1px solid #181818;font-size:0.8rem;display:flex;gap:1.5rem;">
+        <a href="/compare" style="color:#888;text-decoration:none;">Compare</a>
+        <a href="/calibrate" style="color:#888;text-decoration:none;">Calibrate ROI</a>
+        <a href="/debug" style="color:#888;text-decoration:none;">Motion Debug</a>
+    </nav>
 
     <div class="filters">
         <a href="/" class="{{ 'active' if not active_filter else '' }}">All</a>
@@ -122,14 +214,17 @@
             {% for swing in swings %}
             <div class="swing-card" data-swing-id="{{ swing.id }}">
                 <div class="swing-header">
-                    <span class="swing-time">{{ swing.timestamp }}</span>
-                    <span class="swing-id">#{{ swing.id }}</span>
+                    <span class="swing-time" data-ts="{{ swing.timestamp }}">{{ swing.timestamp }}</span>
+                    <span class="swing-id">#{{ swing.id[:8] }}</span>
                 </div>
                 <div class="swing-videos">
                     {% for clip in swing.clips %}
-                    <video controls preload="metadata" muted>
-                        <source src="/clips/{{ clip.filepath.split('/')[-1] }}" type="video/mp4">
-                    </video>
+                    <div class="video-wrap">
+                        <span class="video-label">{{ clip.angle or clip.camera_name }}</span>
+                        <video controls preload="metadata" muted playsinline>
+                            <source src="/clips/{{ clip.filepath }}" type="video/mp4">
+                        </video>
+                    </div>
                     {% endfor %}
                 </div>
                 <div class="swing-actions">
@@ -141,7 +236,13 @@
                            placeholder="Notes..."
                            value="{{ swing.notes or '' }}"
                            onchange="updateNotes('{{ swing.id }}', this.value)">
+                    <button class="analysis-toggle" onclick="toggleAnalysis('{{ swing.id }}')">Analysis ▾</button>
                     <button class="tag-btn delete" onclick="deleteSwing('{{ swing.id }}')">🗑</button>
+                </div>
+                <div class="analysis-panel" id="analysis-{{ swing.id }}">
+                    <div class="metrics-grid" id="metrics-{{ swing.id }}">
+                        <span style="color:#555">Loading analysis...</span>
+                    </div>
                 </div>
             </div>
             {% endfor %}
@@ -182,6 +283,179 @@
                 document.querySelector(`[data-swing-id="${id}"]`).remove();
             }
         }
+
+        // Synchronized multi-camera playback
+        function setupSyncPlayback(card) {
+            const videos = card.querySelectorAll('video');
+            if (videos.length < 2) return;
+            const primary = videos[0];
+            let syncing = false;
+
+            primary.addEventListener('play', () => {
+                videos.forEach((v, i) => { if (i > 0) v.play(); });
+            });
+            primary.addEventListener('pause', () => {
+                videos.forEach((v, i) => { if (i > 0) v.pause(); });
+            });
+            primary.addEventListener('seeked', () => {
+                if (syncing) return;
+                syncing = true;
+                videos.forEach((v, i) => {
+                    if (i > 0) v.currentTime = primary.currentTime;
+                });
+                syncing = false;
+            });
+        }
+        document.querySelectorAll('.swing-card').forEach(setupSyncPlayback);
+
+        // Analysis panel
+        const analysisCache = {};
+        async function toggleAnalysis(swingId) {
+            const panel = document.getElementById('analysis-' + swingId);
+            const isOpen = panel.classList.toggle('open');
+            if (!isOpen) return;
+
+            if (analysisCache[swingId]) {
+                renderAnalysis(swingId, analysisCache[swingId]);
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/swings/${swingId}/analysis`);
+                const data = await res.json();
+                analysisCache[swingId] = data;
+                renderAnalysis(swingId, data);
+            } catch (e) {
+                document.getElementById('metrics-' + swingId).innerHTML =
+                    '<span style="color:#555">Failed to load analysis</span>';
+            }
+        }
+
+        function renderAnalysis(swingId, data) {
+            const container = document.getElementById('metrics-' + swingId);
+            if (!data || data.length === 0) {
+                container.innerHTML = '<span style="color:#555">No analysis available yet</span>';
+                return;
+            }
+            const a = data[0];
+            let html = '<div class="metrics-grid">';
+            if (a.tempo_ratio != null) {
+                html += `<div class="metric"><span class="label">Tempo</span><span class="value">${a.tempo_ratio}:1</span></div>`;
+            }
+            if (a.head_stability != null) {
+                html += `<div class="metric"><span class="label">Head Stability</span><span class="value">${a.head_stability}</span></div>`;
+            }
+            if (a.hip_rotation != null) {
+                html += `<div class="metric"><span class="label">Hip Rotation</span><span class="value">${a.hip_rotation}&deg;</span></div>`;
+            }
+            if (a.shoulder_rotation != null) {
+                html += `<div class="metric"><span class="label">Shoulder Turn</span><span class="value">${a.shoulder_rotation}&deg;</span></div>`;
+            }
+            if (a.backswing_frames != null && a.downswing_frames != null) {
+                html += `<div class="metric"><span class="label">Backswing</span><span class="value">${a.backswing_frames}f</span></div>`;
+                html += `<div class="metric"><span class="label">Downswing</span><span class="value">${a.downswing_frames}f</span></div>`;
+            }
+            html += '</div>';
+
+            // Phase bar
+            if (a.phases_json) {
+                try {
+                    const phases = JSON.parse(a.phases_json);
+                    const totalFrames = phases.length > 0 ? phases[phases.length - 1].end_frame : 1;
+                    html += '<div class="phase-bar">';
+                    phases.forEach(p => {
+                        const pct = ((p.end_frame - p.start_frame) / totalFrames * 100);
+                        if (pct > 0.5) {
+                            html += `<div class="segment ${p.phase}" style="width:${pct}%" title="${p.phase}"></div>`;
+                        }
+                    });
+                    html += '</div>';
+                } catch (e) {}
+            }
+            container.innerHTML = html;
+        }
+
+        // Relative timestamps
+        function relativeTime(isoStr) {
+            const d = new Date(isoStr);
+            const now = new Date();
+            const diffMs = now - d;
+            const diffS = Math.floor(diffMs / 1000);
+            if (diffS < 60) return 'just now';
+            const diffM = Math.floor(diffS / 60);
+            if (diffM < 60) return diffM + 'm ago';
+            const diffH = Math.floor(diffM / 60);
+            if (diffH < 24) return diffH + 'h ago';
+            const diffD = Math.floor(diffH / 24);
+            if (diffD < 7) return diffD + 'd ago';
+            return d.toLocaleDateString();
+        }
+        document.querySelectorAll('.swing-time[data-ts]').forEach(el => {
+            const ts = el.dataset.ts;
+            el.textContent = relativeTime(ts);
+            el.title = ts;
+        });
+
+        // SSE: live swing notifications
+        let evtSource = null;
+        function connectSSE() {
+            evtSource = new EventSource('/api/events');
+            evtSource.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'new_swing') {
+                    // Reload to show the new swing at the top
+                    location.reload();
+                }
+            };
+            evtSource.onerror = () => {
+                evtSource.close();
+                setTimeout(connectSSE, 5000);
+            };
+        }
+        connectSSE();
+
+        // Keyboard navigation
+        let selectedIdx = -1;
+        function getCards() { return [...document.querySelectorAll('.swing-card')]; }
+        function selectCard(idx) {
+            const cards = getCards();
+            if (idx < 0 || idx >= cards.length) return;
+            cards.forEach(c => c.style.outline = 'none');
+            selectedIdx = idx;
+            cards[idx].style.outline = '2px solid #4ade80';
+            cards[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            const cards = getCards();
+            switch (e.key) {
+                case 'ArrowDown': case 'j':
+                    e.preventDefault();
+                    selectCard(Math.min(selectedIdx + 1, cards.length - 1));
+                    break;
+                case 'ArrowUp': case 'k':
+                    e.preventDefault();
+                    selectCard(Math.max(selectedIdx - 1, 0));
+                    break;
+                case 'g':
+                    if (selectedIdx >= 0) {
+                        tagSwing(cards[selectedIdx].dataset.swingId, 'good');
+                    }
+                    break;
+                case 'b':
+                    if (selectedIdx >= 0) {
+                        tagSwing(cards[selectedIdx].dataset.swingId, 'bad');
+                    }
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    if (selectedIdx >= 0) {
+                        const vid = cards[selectedIdx].querySelector('video');
+                        if (vid) vid.paused ? vid.play() : vid.pause();
+                    }
+                    break;
+            }
+        });
     </script>
 </body>
 </html>

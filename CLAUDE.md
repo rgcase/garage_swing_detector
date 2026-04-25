@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-**garage_swing_detector** is an automated golf swing recording system. Raspberry Pi Zero cameras stream H.264 video to a Linux server, which runs motion-based swing detection, saves clips around detected swings, and serves a web UI for reviewing and tagging recordings.
+**garage_swing_detector** is an automated golf swing recording system. Raspberry Pi Zero cameras stream H.264 video to a Mac Mini server, which runs motion-based swing detection, saves clips around detected swings, and serves a web UI for reviewing and tagging recordings.
 
 The goal is a "set and forget" system: cameras run continuously, swings are detected and clipped automatically, and the user reviews/tags them later via web UI or phone.
 
 ## Architecture
 
 ```
-Pi Zero (face-on cam) ──TCP/H.264──►  Ubuntu Server
+Pi Zero (face-on cam) ──TCP/H.264──►  Mac Mini (macOS)
 Pi Zero (dtl cam)     ──TCP/H.264──►  - FFmpeg decodes streams
                                       - Circular frame buffer per camera
                                       - Frame-differencing swing detection
@@ -30,7 +30,7 @@ Pi Zero (dtl cam)     ──TCP/H.264──►  - FFmpeg decodes streams
 - `server/` — Python server application. Entry point is `main.py`.
   - `stream_receiver.py` — TCP listener, FFmpeg subprocess, circular frame buffer
   - `swing_detector.py` — Frame differencing motion detection
-  - `clip_saver.py` — Extracts frames from buffer, writes MP4 via OpenCV
+  - `clip_saver.py` — Extracts frames from buffer, writes H.264 MP4 via FFmpeg
   - `db.py` — SQLite schema and queries (swings table + clips table)
   - `web.py` — FastAPI app with Jinja2 templates
   - `config.yaml` — All tunable parameters
@@ -48,7 +48,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Requires FFmpeg installed on the host (`sudo apt install ffmpeg`).
+Requires FFmpeg installed on the host (`brew install ffmpeg`).
+
+Note: macOS firewall must allow FFmpeg TCP connections (System Settings > Privacy & Security > Firewall).
 
 Web UI runs at `http://localhost:8080` by default.
 
@@ -88,9 +90,9 @@ All tuning is in `server/config.yaml`. Key parameters:
 
 ## Planned Features
 
-- [ ] GPIO button on Pi for manual tagging (press after swing for quick good/bad)
-- [ ] Auto-play latest swing in web UI
+- [ ] Auto-play latest swing in web UI (SSE live updates)
 - [ ] Swing comparison view (side-by-side two swings)
-- [ ] MoveNet pose estimation for more precise swing phase detection
+- [ ] Gesture detection (thumbs up/down via MediaPipe) for quick swing rating
+- [ ] MediaPipe Pose estimation for swing phase detection and metrics
 - [ ] Export tagged swings as compilation video
-- [ ] Mobile-friendly web UI improvements
+- [ ] Mobile-friendly PWA UI improvements

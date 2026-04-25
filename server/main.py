@@ -17,6 +17,8 @@ import yaml
 
 from clip_saver import ClipSaver
 from db import SwingDB
+from gesture_detector import GestureDetector
+from pose_analyzer import PoseAnalyzer
 from stream_receiver import CircularFrameBuffer, StreamReceiver
 from swing_detector import SwingDetector, SwingEvent
 from web import create_app
@@ -33,10 +35,14 @@ class SwingCamServer:
     """Orchestrates all components."""
 
     def __init__(self, config_path: str = "config.yaml"):
+        self._config_path = config_path
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
-        self.db = SwingDB(self.config["database"]["path"])
+        self.db = SwingDB(
+            self.config["database"]["path"],
+            clips_dir=self.config["clips"]["output_dir"],
+        )
         self.clip_saver = ClipSaver(
             output_dir=self.config["clips"]["output_dir"],
             pre_seconds=self.config["clips"]["pre_seconds"],
@@ -47,9 +53,22 @@ class SwingCamServer:
         self.detectors: list[SwingDetector] = []
         self.buffers: dict[str, CircularFrameBuffer] = {}
 
+        # Gesture detection (thumbs up/down after swing)
+        self.gesture_detector = GestureDetector(
+            watch_seconds=10.0,
+            on_gesture=self._on_gesture_detected,
+        )
+
+        # Pose analysis (runs offline on saved clips)
+        self.pose_analyzer = PoseAnalyzer(
+            clips_dir=self.config["clips"]["output_dir"],
+        )
+        self.pose_analyzer.on_analysis = self._on_analysis_complete
+
         # For multi-camera swing correlation
         self._pending_events: list[SwingEvent] = []
         self._pending_lock = threading.Lock()
+        self._app = None  # Set when web app is created, for SSE notifications
 
         self._setup_cameras()
 
@@ -87,8 +106,9 @@ class SwingCamServer:
                 on_swing=self._on_swing_detected,
             )
 
-            # Wire: each decoded frame goes to the detector
+            # Wire: each decoded frame goes to the detector and gesture detector
             receiver.on_frame(detector.process_frame)
+            receiver.on_frame(lambda tf: self.gesture_detector.process_frame(tf.frame))
 
             self.receivers.append(receiver)
             self.detectors.append(detector)
@@ -107,6 +127,7 @@ class SwingCamServer:
             # Simple path: one camera, one swing
             swing_id = self.db.generate_swing_id()
             self.db.create_swing(swing_id, event.trigger_time)
+            self.gesture_detector.start_watching(swing_id)
             cam_cfg = self.config["cameras"][0]
             self.clip_saver.save_clip_async(
                 buffer=self.buffers[event.camera_name],
@@ -144,6 +165,7 @@ class SwingCamServer:
                 self._pending_events.remove(matched)
                 swing_id = self.db.generate_swing_id()
                 self.db.create_swing(swing_id, min(matched.trigger_time, event.trigger_time))
+                self.gesture_detector.start_watching(swing_id)
 
                 for evt in [matched, event]:
                     cam_cfg = next(
@@ -177,6 +199,7 @@ class SwingCamServer:
                 self._pending_events.remove(event)
                 swing_id = self.db.generate_swing_id()
                 self.db.create_swing(swing_id, event.trigger_time)
+                self.gesture_detector.start_watching(swing_id)
                 cam_cfg = next(
                     c for c in self.config["cameras"] if c["name"] == event.camera_name
                 )
@@ -190,10 +213,38 @@ class SwingCamServer:
                 )
                 logger.info(f"Single-camera swing {swing_id} from {event.camera_name} (no correlation)")
 
+    def _on_gesture_detected(self, swing_id: str, gesture: str):
+        """Called when a thumbs up/down gesture is confirmed."""
+        tag = gesture  # 'good' or 'bad'
+        self.db.tag_swing(swing_id, tag)
+        logger.info(f"Swing {swing_id[:8]} tagged as '{tag}' via gesture")
+        if self._app and hasattr(self._app, "notify_new_swing"):
+            self._app.notify_new_swing(swing_id)
+
+    def _on_analysis_complete(self, result: dict):
+        """Called when pose analysis finishes for a clip."""
+        import json
+        self.db.save_analysis(
+            swing_id=result["swing_id"],
+            camera_name=result["camera_name"],
+            tempo_ratio=result.get("tempo_ratio"),
+            backswing_frames=result.get("backswing_frames"),
+            downswing_frames=result.get("downswing_frames"),
+            head_stability=result.get("head_stability"),
+            hip_rotation=result.get("hip_rotation"),
+            shoulder_rotation=result.get("shoulder_rotation"),
+            phases_json=json.dumps(result.get("phases", [])),
+        )
+
     def _on_clip_saved(self, swing_id: str, camera_name: str, angle: str, filepath: str | None):
         if filepath:
             self.db.add_clip(swing_id, camera_name, angle, filepath)
             logger.info(f"Clip saved for swing {swing_id}: {filepath}")
+            # Queue for pose analysis
+            self.pose_analyzer.queue_analysis(swing_id, camera_name, filepath)
+            # Notify SSE subscribers of the new/updated swing
+            if self._app and hasattr(self._app, "notify_new_swing"):
+                self._app.notify_new_swing(swing_id)
         else:
             logger.warning(f"Failed to save clip for swing {swing_id} ({camera_name})")
 
@@ -209,7 +260,16 @@ class SwingCamServer:
 
         # Start web server in a thread
         web_cfg = self.config["server"]
-        app = create_app(self.db, self.config["clips"]["output_dir"])
+        app = create_app(
+            self.db,
+            self.config["clips"]["output_dir"],
+            receivers=self.receivers,
+            buffers=self.buffers,
+            detectors=self.detectors,
+            config=self.config,
+            config_path=self._config_path,
+        )
+        self._app = app
 
         server_thread = threading.Thread(
             target=lambda: uvicorn.run(

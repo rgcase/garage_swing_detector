@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>swing-cam | Compare</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; padding: 1.5rem; }
+        h1 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+        a { color: #4ade80; text-decoration: none; }
+
+        .pickers { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+        .picker { flex: 1; min-width: 250px; }
+        .picker label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 0.3rem; }
+        .picker select {
+            width: 100%; padding: 0.5rem; border-radius: 6px;
+            background: #1a1a1a; border: 1px solid #333; color: #e0e0e0;
+            font-size: 0.85rem;
+        }
+
+        .compare-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .compare-side {
+            flex: 1; min-width: 300px;
+            background: #141414; border: 1px solid #222; border-radius: 10px;
+            overflow: hidden;
+        }
+        .compare-side .side-header {
+            padding: 0.75rem 1rem; border-bottom: 1px solid #222;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .side-header .label { font-size: 0.85rem; color: #aaa; }
+        .side-header .tag {
+            font-size: 0.75rem; padding: 2px 8px; border-radius: 4px;
+        }
+        .side-header .tag.good { background: #1a3a1a; color: #4ade80; }
+        .side-header .tag.bad { background: #3a1a1a; color: #f87171; }
+
+        .compare-side video {
+            width: 100%; display: block; background: #000;
+        }
+        .compare-side .video-label {
+            font-size: 0.7rem; color: #666; padding: 0.3rem 1rem;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
+
+        .controls {
+            margin-top: 1rem; display: flex; gap: 0.75rem; align-items: center;
+        }
+        .controls button {
+            padding: 0.5rem 1.2rem; border-radius: 6px;
+            border: 1px solid #333; background: #1a1a1a; color: #e0e0e0;
+            cursor: pointer; font-size: 0.85rem;
+        }
+        .controls button:hover { background: #222; }
+        .controls button.primary { border-color: #4ade80; color: #4ade80; }
+
+        .empty { color: #555; padding: 3rem; text-align: center; }
+
+        @media (max-width: 768px) {
+            .compare-side { min-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Compare Swings</h1>
+    <p class="subtitle">Select two swings to compare side-by-side. <a href="/">&larr; Back</a></p>
+
+    <div class="pickers">
+        <div class="picker">
+            <label>Swing A</label>
+            <select id="select-a" onchange="updateComparison()">
+                <option value="">Select a swing...</option>
+                {% for s in swings %}
+                <option value="{{ s.id }}" {{ 'selected' if swing_a and s.id == swing_a.id else '' }}>
+                    {{ s.timestamp }} {{ '(' + s.tag + ')' if s.tag else '' }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="picker">
+            <label>Swing B</label>
+            <select id="select-b" onchange="updateComparison()">
+                <option value="">Select a swing...</option>
+                {% for s in swings %}
+                <option value="{{ s.id }}" {{ 'selected' if swing_b and s.id == swing_b.id else '' }}>
+                    {{ s.timestamp }} {{ '(' + s.tag + ')' if s.tag else '' }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="primary" onclick="syncPlay()">Play Both</button>
+        <button onclick="syncPause()">Pause Both</button>
+        <button onclick="syncRestart()">Restart</button>
+    </div>
+
+    <div class="compare-grid" id="compare-grid" style="margin-top:1rem;">
+        {% if swing_a %}
+        <div class="compare-side" id="side-a">
+            <div class="side-header">
+                <span class="label">{{ swing_a.timestamp }}</span>
+                {% if swing_a.tag %}
+                <span class="tag {{ swing_a.tag }}">{{ swing_a.tag }}</span>
+                {% endif %}
+            </div>
+            {% for clip in swing_a.clips %}
+            <div class="video-label">{{ clip.angle or clip.camera_name }}</div>
+            <video controls muted playsinline preload="metadata">
+                <source src="/clips/{{ clip.filepath }}" type="video/mp4">
+            </video>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if swing_b %}
+        <div class="compare-side" id="side-b">
+            <div class="side-header">
+                <span class="label">{{ swing_b.timestamp }}</span>
+                {% if swing_b.tag %}
+                <span class="tag {{ swing_b.tag }}">{{ swing_b.tag }}</span>
+                {% endif %}
+            </div>
+            {% for clip in swing_b.clips %}
+            <div class="video-label">{{ clip.angle or clip.camera_name }}</div>
+            <video controls muted playsinline preload="metadata">
+                <source src="/clips/{{ clip.filepath }}" type="video/mp4">
+            </video>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if not swing_a and not swing_b %}
+        <div class="empty">Select two swings above to compare them.</div>
+        {% endif %}
+    </div>
+
+    <script>
+    function updateComparison() {
+        const a = document.getElementById('select-a').value;
+        const b = document.getElementById('select-b').value;
+        const params = new URLSearchParams();
+        if (a) params.set('a', a);
+        if (b) params.set('b', b);
+        window.location.href = '/compare?' + params.toString();
+    }
+
+    function getAllVideos() {
+        return [...document.querySelectorAll('.compare-side video')];
+    }
+
+    function syncPlay() {
+        getAllVideos().forEach(v => v.play());
+    }
+    function syncPause() {
+        getAllVideos().forEach(v => v.pause());
+    }
+    function syncRestart() {
+        getAllVideos().forEach(v => { v.currentTime = 0; v.play(); });
+    }
+
+    // Sync seek across all videos
+    const videos = getAllVideos();
+    if (videos.length > 1) {
+        videos[0].addEventListener('seeked', () => {
+            const t = videos[0].currentTime;
+            videos.forEach((v, i) => { if (i > 0) v.currentTime = t; });
+        });
+    }
+    </script>
+</body>
+</html>

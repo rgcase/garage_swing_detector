@@ -6,6 +6,7 @@ venv/
 
 # Project runtime
 clips/
+logs/
 *.db
 *.db-wal
 *.db-shm
