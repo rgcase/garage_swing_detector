@@ -10,7 +10,6 @@
 #   swingcam logs         Tail the server logs
 #   swingcam update [SHA] Pull latest main (or a specific SHA) and restart
 #   swingcam config       Open the config file in $EDITOR
-#   swingcam proxy        Set up Caddy reverse proxy (port 80 → server)
 #
 
 set -euo pipefail
@@ -28,9 +27,6 @@ ERR_FILE="$LOG_DIR/swingcam.err"
 
 PLIST_NAME="com.swingcam.server"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
-
-PROXY_PLIST_NAME="com.swingcam.proxy"
-PROXY_PLIST_DST="$HOME/Library/LaunchAgents/$PROXY_PLIST_NAME.plist"
 
 # ── Helpers ──
 
@@ -130,10 +126,6 @@ _pid() {
     launchctl list "$PLIST_NAME" 2>/dev/null | head -1 | awk '{print $1}'
 }
 
-_is_proxy_running() {
-    launchctl list "$PROXY_PLIST_NAME" &>/dev/null
-}
-
 # ── Commands ──
 
 cmd_start() {
@@ -161,9 +153,6 @@ cmd_start() {
         pid=$(_pid)
         _green "swing-cam started (PID $pid)"
         echo "  Web UI:  http://localhost:$port"
-        if _is_proxy_running; then
-            echo "  Proxy:   http://home-server.local (port 80 → $port)"
-        fi
         echo "  Config:  $CONFIG_FILE"
         echo "  Clips:   $APP_DIR/clips"
         echo "  Logs:    $LOG_FILE"
@@ -206,10 +195,6 @@ cmd_status() {
         fi
     else
         _red "Not running"
-    fi
-
-    if _is_proxy_running; then
-        _green "Proxy: port 80 → $port"
     fi
 
     echo ""
@@ -260,112 +245,6 @@ cmd_config() {
             cmd_restart
         fi
     fi
-}
-
-cmd_proxy() {
-    local subcmd="${1:-setup}"
-
-    case "$subcmd" in
-        setup)
-            # Check for caddy
-            if ! command -v caddy &>/dev/null; then
-                echo "Caddy not found. Installing via Homebrew..."
-                brew install caddy
-            fi
-
-            local port
-            port=$(_get_web_port)
-
-            # Generate launchd plist for caddy
-            cat > "$PROXY_PLIST_DST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$PROXY_PLIST_NAME</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>$(which caddy)</string>
-        <string>reverse-proxy</string>
-        <string>--from</string>
-        <string>:80</string>
-        <string>--to</string>
-        <string>:$port</string>
-    </array>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-
-    <key>StandardOutPath</key>
-    <string>/dev/null</string>
-
-    <key>StandardErrorPath</key>
-    <string>$LOG_DIR/caddy.err</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
-</dict>
-</plist>
-PLIST
-
-            # Port 80 requires elevated privileges
-            if _is_proxy_running; then
-                launchctl unload "$PROXY_PLIST_DST" 2>/dev/null || true
-                sleep 1
-            fi
-
-            echo "Starting Caddy reverse proxy (port 80 → $port)..."
-            echo "Note: port 80 may require sudo. If it fails, run:"
-            echo "  sudo caddy reverse-proxy --from :80 --to :$port"
-            echo ""
-
-            launchctl load "$PROXY_PLIST_DST"
-            sleep 1
-
-            if _is_proxy_running; then
-                _green "Proxy running: http://home-server.local → localhost:$port"
-            else
-                _yellow "Proxy may have failed to bind port 80."
-                echo "Try: sudo caddy reverse-proxy --from :80 --to :$port"
-            fi
-            ;;
-
-        stop)
-            if _is_proxy_running; then
-                launchctl unload "$PROXY_PLIST_DST" 2>/dev/null || true
-                sleep 1
-                _green "Proxy stopped."
-            else
-                _yellow "Proxy is not running."
-            fi
-            ;;
-
-        status)
-            if _is_proxy_running; then
-                local port
-                port=$(_get_web_port)
-                _green "Proxy running: port 80 → $port"
-            else
-                _red "Proxy not running"
-            fi
-            ;;
-
-        *)
-            echo "Usage: swingcam proxy [setup|stop|status]"
-            ;;
-    esac
 }
 
 cmd_update() {
@@ -419,9 +298,6 @@ Commands:
   logs            Tail the server logs (Ctrl+C to stop)
   config          Edit the config file (restarts server if running)
   update [SHA]    Pull latest main (or checkout a specific SHA) and restart
-  proxy           Set up Caddy reverse proxy (port 80 → server)
-  proxy stop      Stop the reverse proxy
-  proxy status    Check if the proxy is running
 
 Data directory: $APP_DIR
   config.yaml     Server configuration
@@ -432,7 +308,6 @@ Data directory: $APP_DIR
 
 First-time setup:
   swingcam start
-  swingcam proxy           # optional: access via http://home-server.local
 HELP
 }
 
@@ -446,7 +321,6 @@ case "${1:-help}" in
     logs)    cmd_logs ;;
     config)  cmd_config ;;
     update)  cmd_update "${2:-main}" ;;
-    proxy)   cmd_proxy "${2:-setup}" ;;
     help|--help|-h) cmd_help ;;
     *)
         _red "Unknown command: $1"
