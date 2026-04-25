@@ -4,6 +4,12 @@ server:
   host: "0.0.0.0"
   web_port: 8080
 
+# Video stream settings (must match what the Pi sends)
+stream:
+  width: 1280
+  height: 720
+  fps: 30
+
 cameras:
   - name: "face-on"
     host: "0.0.0.0"          # Listen address for incoming stream
@@ -34,11 +40,14 @@ detection:
 clips:
   pre_seconds: 3              # Seconds before swing trigger to include
   post_seconds: 6             # Seconds after swing trigger to include
-  output_dir: "./clips"       # Where to save swing clips
+  output_dir: "./clips"       # Where to save swing clips (absolute or relative to server/)
   format: "mp4"               # Output format
+  # Max total disk usage for clips in MB. Oldest clips are deleted when exceeded.
+  # Set to null for unlimited.
+  max_storage_mb: null
 
 buffer:
-  max_seconds: 20             # Circular buffer size per camera
+  max_seconds: 20             # Circular buffer size per camera (seconds of video in RAM)
 
 correlation:
   # For multi-camera setups: max time gap (seconds) between detections
@@ -46,4 +55,9 @@ correlation:
   window_seconds: 2.0
 
 database:
-  path: "./swings.db"
+  path: "./swings.db"         # SQLite database path (absolute or relative to server/)
+
+logging:
+  level: "INFO"               # DEBUG, INFO, WARNING, ERROR
+  max_bytes: 10485760         # Max log file size in bytes (default 10MB)
+  backup_count: 5             # Number of rotated log files to keep

@@ -28,29 +28,33 @@ LOG_FORMAT = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
 LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 
-def _setup_logging():
+def _setup_logging(log_cfg: dict | None = None):
+    log_cfg = log_cfg or {}
+    level = getattr(logging, log_cfg.get("level", "INFO").upper(), logging.INFO)
+
     root = logging.getLogger()
-    root.setLevel(logging.INFO)
+    root.setLevel(level)
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
 
-    # Always log to console (for manual runs and launchd stdout capture)
+    # Always log to console
     console = logging.StreamHandler()
     console.setFormatter(formatter)
     root.addHandler(console)
 
-    # Rotating file log: 10 MB per file, keep 5 backups (50 MB total max)
+    # Rotating file log
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
         log_dir / "swingcam.log",
-        maxBytes=10 * 1024 * 1024,  # 10 MB
-        backupCount=5,
+        maxBytes=log_cfg.get("max_bytes", 10 * 1024 * 1024),
+        backupCount=log_cfg.get("backup_count", 5),
     )
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
 
 
-_setup_logging()
+# Basic console logging until config is loaded
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt=LOG_DATEFMT)
 logger = logging.getLogger("swing-cam")
 
 
@@ -62,14 +66,28 @@ class SwingCamServer:
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
 
+        # Set up logging from config (replaces the basic bootstrap logger)
+        _setup_logging(self.config.get("logging"))
+
+        # Stream settings with defaults
+        stream_cfg = self.config.get("stream", {})
+        self._fps = stream_cfg.get("fps", 30)
+        self._width = stream_cfg.get("width", 1280)
+        self._height = stream_cfg.get("height", 720)
+
         self.db = SwingDB(
             self.config["database"]["path"],
             clips_dir=self.config["clips"]["output_dir"],
         )
+        clips_cfg = self.config["clips"]
         self.clip_saver = ClipSaver(
-            output_dir=self.config["clips"]["output_dir"],
-            pre_seconds=self.config["clips"]["pre_seconds"],
-            post_seconds=self.config["clips"]["post_seconds"],
+            output_dir=clips_cfg["output_dir"],
+            pre_seconds=clips_cfg["pre_seconds"],
+            post_seconds=clips_cfg["post_seconds"],
+            fps=self._fps,
+            width=self._width,
+            height=self._height,
+            max_storage_mb=clips_cfg.get("max_storage_mb"),
         )
 
         self.receivers: list[StreamReceiver] = []
@@ -99,14 +117,13 @@ class SwingCamServer:
         """Create a receiver + detector + buffer for each configured camera."""
         det_cfg = self.config["detection"]
         buf_cfg = self.config["buffer"]
-        fps = 30.0  # Match the Pi stream FPS
 
         for cam in self.config["cameras"]:
             name = cam["name"]
 
             # Circular buffer
             buf = CircularFrameBuffer(
-                max_seconds=buf_cfg["max_seconds"], fps=fps
+                max_seconds=buf_cfg["max_seconds"], fps=self._fps
             )
             self.buffers[name] = buf
 
@@ -116,7 +133,9 @@ class SwingCamServer:
                 host=cam["host"],
                 port=cam["port"],
                 buffer=buf,
-                fps=fps,
+                width=self._width,
+                height=self._height,
+                fps=self._fps,
             )
 
             # Swing detector

@@ -27,6 +27,7 @@ class ClipSaver:
         fps: float = 30.0,
         width: int = 1280,
         height: int = 720,
+        max_storage_mb: float | None = None,
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -35,6 +36,7 @@ class ClipSaver:
         self.fps = fps
         self.width = width
         self.height = height
+        self.max_storage_bytes = int(max_storage_mb * 1024 * 1024) if max_storage_mb else None
 
     def save_clip(
         self,
@@ -109,7 +111,24 @@ class ClipSaver:
             f"[{camera_name}] Saved {filepath.name} "
             f"({len(frames)} frames, {duration:.1f}s)"
         )
+
+        self._enforce_storage_limit()
         return filename
+
+    def _enforce_storage_limit(self):
+        """Delete oldest clips if total storage exceeds the configured limit."""
+        if not self.max_storage_bytes:
+            return
+
+        clips = sorted(self.output_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
+        total = sum(p.stat().st_size for p in clips)
+
+        while total > self.max_storage_bytes and len(clips) > 1:
+            oldest = clips.pop(0)
+            size = oldest.stat().st_size
+            oldest.unlink()
+            total -= size
+            logger.info(f"Storage limit: deleted {oldest.name} ({size // 1024}KB)")
 
     def save_clip_async(
         self,
