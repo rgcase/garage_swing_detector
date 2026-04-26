@@ -167,7 +167,7 @@ def create_app(
                     continue
                 last_index = latest.index
                 _, jpeg = cv2.imencode(
-                    ".jpg", latest.frame, [cv2.IMWRITE_JPEG_QUALITY, 70]
+                    ".jpg", latest.frame, [cv2.IMWRITE_JPEG_QUALITY, 92]
                 )
                 yield (
                     b"--frame\r\n"
