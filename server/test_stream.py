@@ -5,10 +5,9 @@ Generates frames with a clear still→burst→still pattern that exercises
 the multi-stage swing detector (motion gate + optical flow + duration
 filter). Pipes the frames through FFmpeg for H.264 + TCP delivery.
 
-Invoked via the swingcam CLI: `swingcam test [host] [port]`
+Invoked via the swingcam CLI: `swingcam stream --test <ff|dtl> [host]`
 """
 
-import math
 import subprocess
 import sys
 import time
@@ -20,17 +19,24 @@ WIDTH = 1280
 HEIGHT = 720
 FPS = 30
 
-CYCLE_SECONDS = 10.0   # full cycle (still + burst + still)
-BURST_START = 8.0      # when in the cycle the burst begins
-BURST_DURATION = 0.4   # length of the motion burst
+CYCLE_SECONDS = 10.0    # full cycle (still + burst + still)
+BURST_START = 8.0       # when in the cycle the burst begins
+BURST_DURATION = 0.7    # length of the motion burst (seconds)
+
+# Object that sweeps across the frame during the burst.
+# Sized so it fills ~6% of the frame, which lands in the optical-flow
+# detector's "concentrated motion" sweet spot (5-40%).
+OBJECT_W = 240
+OBJECT_H = 460
 
 
 def make_frame(t: float) -> np.ndarray:
     """Build a single frame at time t (seconds since start)."""
+    # Dark gray background
     frame = np.full((HEIGHT, WIDTH, 3), 30, dtype=np.uint8)
 
-    # Static "ground" stripe — gives the still phase a stable reference
-    cv2.rectangle(frame, (440, 600), (840, 640), (70, 70, 70), -1)
+    # Static "ground" stripe so the still phase is not perfectly black
+    cv2.rectangle(frame, (440, 620), (840, 660), (70, 70, 70), -1)
     cv2.putText(
         frame, "swing-cam test", (530, 100),
         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (90, 90, 90), 2,
@@ -40,17 +46,26 @@ def make_frame(t: float) -> np.ndarray:
     in_burst = BURST_START <= cycle_pos < BURST_START + BURST_DURATION
 
     if in_burst:
-        # Fast arc-shaped sweep across the frame — simulates club + arms
         progress = (cycle_pos - BURST_START) / BURST_DURATION  # 0..1
-        x = int(progress * (WIDTH + 200) - 100)
-        y_arc = int(420 - 120 * math.sin(progress * math.pi))
+        # Sweep horizontally; object enters from off-frame on the left
+        # and exits off-frame on the right.
+        total_x = WIDTH + OBJECT_W * 2
+        cx = int(progress * total_x - OBJECT_W)
+        cy = HEIGHT // 2 - 30
+
+        # Bright object body — high contrast against the background
         cv2.rectangle(
-            frame, (x - 30, y_arc - 200), (x + 30, y_arc + 50),
-            (255, 255, 255), -1,
+            frame,
+            (cx - OBJECT_W // 2, cy - OBJECT_H // 2),
+            (cx + OBJECT_W // 2, cy + OBJECT_H // 2),
+            (240, 240, 240), -1,
         )
-        cv2.line(
-            frame, (x - 80, y_arc - 200), (x + 30, y_arc - 200),
-            (180, 180, 180), 8,
+        # A second offset object to add more total motion area
+        cv2.rectangle(
+            frame,
+            (cx - OBJECT_W // 2 - 80, cy - OBJECT_H // 2 - 60),
+            (cx + OBJECT_W // 2 - 80, cy - OBJECT_H // 2 + 20),
+            (200, 200, 200), -1,
         )
 
     return frame
@@ -85,6 +100,7 @@ def run(host: str, port: str):
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     start = time.time()
     frame_idx = 0
+    last_logged_cycle = -1  # so we only print once per burst
 
     try:
         while True:
@@ -104,10 +120,12 @@ def run(host: str, port: str):
             if expected > now:
                 time.sleep(expected - now)
 
-            # Status print at the start of each burst
-            cycle_pos = t % CYCLE_SECONDS
-            if abs(cycle_pos - BURST_START) < 1 / FPS:
-                print(f"[{int(t)}s] BURST", flush=True)
+            # Print exactly once at the start of each burst
+            cycle_idx = int(t // CYCLE_SECONDS)
+            cycle_pos = t - cycle_idx * CYCLE_SECONDS
+            if cycle_pos >= BURST_START and cycle_idx != last_logged_cycle:
+                last_logged_cycle = cycle_idx
+                print(f"[t={t:.1f}s] BURST", flush=True)
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
