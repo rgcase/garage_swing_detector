@@ -75,6 +75,16 @@ class SwingDB:
             );
             CREATE INDEX IF NOT EXISTS idx_analysis_swing ON swing_analysis(swing_id);
         """)
+
+        # Migrations: ALTER TABLE for columns added after the original schema.
+        # CREATE TABLE IF NOT EXISTS doesn't add columns to an existing table,
+        # so we have to check and add explicitly.
+        clip_cols = {row[1] for row in conn.execute("PRAGMA table_info(clips)").fetchall()}
+        if "trim_start" not in clip_cols:
+            conn.execute("ALTER TABLE clips ADD COLUMN trim_start REAL")
+        if "trim_end" not in clip_cols:
+            conn.execute("ALTER TABLE clips ADD COLUMN trim_end REAL")
+
         conn.commit()
         conn.close()
 
