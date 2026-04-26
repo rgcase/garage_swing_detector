@@ -328,13 +328,14 @@ cmd_update() {
 cmd_stream() {
     local angle_arg="${1:-}"
     local server_ip_arg="${2:-}"
+    local port_override="${3:-}"
 
     local angle port
     case "$angle_arg" in
         ff|front-facing)   angle="ff";  port=9556 ;;
         dtl|down-the-line) angle="dtl"; port=9557 ;;
         "")
-            _red "Usage: swingcam stream <ff|dtl> [server_ip]"
+            _red "Usage: swingcam stream <ff|dtl> <server> [port]"
             exit 1
             ;;
         *)
@@ -342,6 +343,10 @@ cmd_stream() {
             exit 1
             ;;
     esac
+
+    if [ -n "$port_override" ]; then
+        port="$port_override"
+    fi
 
     if ! command -v rpicam-vid &>/dev/null; then
         if ! command -v apt-get &>/dev/null; then
@@ -430,12 +435,12 @@ Commands:
   update [SHA]    Pull latest main (or checkout a specific SHA) and restart
 
 Pi commands:
-  stream <ff|dtl> [server_ip]
+  stream <ff|dtl> <server> [port]
                   Stream the Pi camera to the server. Angle selects port:
                     ff  → 9556 (front-facing)
                     dtl → 9557 (down-the-line)
-                  Server IP is read from arg, \$SWINGCAM_SERVER, or
-                  $APP_DIR/pi.env (prompted on first run).
+                  Server is a hostname or IP (e.g. "swingcam" or "192.168.4.234").
+                  Port defaults based on angle but can be overridden.
 
 Data directory: $APP_DIR
   config.yaml     Server configuration
@@ -459,7 +464,7 @@ case "${1:-help}" in
     logs)    cmd_logs ;;
     config)  cmd_config ;;
     update)  cmd_update "${2:-main}" ;;
-    stream)  cmd_stream "${2:-}" "${3:-}" ;;
+    stream)  cmd_stream "${2:-}" "${3:-}" "${4:-}" ;;
     help|--help|-h) cmd_help ;;
     *)
         _red "Unknown command: $1"
