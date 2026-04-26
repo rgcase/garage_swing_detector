@@ -253,18 +253,19 @@ class SwingDetector:
         # Track spike start/end to measure how long the motion lasts
         if is_moving:
             if self._spike_start is None:
+                # First motion frame: do NOT capture peak_pair here, because
+                # _prev_gray_full is still the pre-motion (still) frame.
+                # Pairing (still, motion) gives Farneback nothing to track.
                 self._spike_start = now
                 self._spike_peak = motion_pct
                 self._spike_reported = False
-                # Capture the prev-and-current frame pair as our flow sample.
-                # Both frames are mid-motion since we just transitioned into
-                # the spike, so the flow algorithm has matchable content.
-                if self._prev_gray_full is not None:
-                    self._peak_pair = (self._prev_gray_full.copy(), gray.copy())
+                self._peak_pair = None
             else:
-                # Update peak_pair whenever we see a new motion peak so flow
-                # is computed at the most active part of the swing.
-                if motion_pct > self._spike_peak and self._prev_gray_full is not None:
+                # 2nd motion frame onwards: both _prev_gray_full and gray have
+                # moving content, so this is a valid pair for optical flow.
+                # Always update so peak_pair holds the most recent pair when
+                # the spike ends.
+                if self._prev_gray_full is not None:
                     self._peak_pair = (self._prev_gray_full.copy(), gray.copy())
                 self._spike_peak = max(self._spike_peak, motion_pct)
         else:
