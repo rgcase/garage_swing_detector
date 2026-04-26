@@ -6,8 +6,9 @@
 # Usage:
 #   ./test_stream.sh [server_host] [port]
 #
-# The stream uses the "life" source (Conway's Game of Life) which produces
-# organic bursts of motion — good for triggering swing detection.
+# Simulates swing-like motion: 8 seconds of stillness, then a fast
+# burst of motion (~0.5s), then stillness again. This pattern matches
+# what the multi-stage detector expects (still → spike → still).
 
 set -euo pipefail
 
@@ -24,17 +25,30 @@ echo "  swing-cam test stream"
 echo "==================================="
 echo "Target: ${SERVER_HOST}:${SERVER_PORT}"
 echo ""
-echo "Make sure the server is running first (cd server && python main.py)"
+echo "Pattern: 8s still → 0.5s motion burst → repeat"
+echo "This should trigger the swing detector every ~10 seconds."
+echo ""
+echo "Make sure the server is running first."
 echo "Press Ctrl+C to stop."
 echo ""
 
-# "life" generates Conway's Game of Life — creates bursts of pixel changes
-# that look like motion events, which is ideal for testing the detector.
-# The stream runs at 1280x720@30fps to match the Pi camera config.
+# Generate a pattern that simulates a golf swing:
+# - Static background (still) for 8 seconds
+# - Fast-moving object (swing burst) for 0.5 seconds
+# - Repeat
+#
+# Uses drawbox with time-based enable to create motion bursts:
+# A box sweeps across the frame rapidly during the burst window,
+# then disappears. The 'between' function enables it for 0.5s
+# every 10 seconds.
 ffmpeg \
     -re \
     -f lavfi \
-    -i "life=size=320x180:rate=30:rule=S23/B3:random_seed=42,scale=1280x720" \
+    -i "color=c=0x1a1a1a:s=1280x720:r=30:d=3600,
+        drawbox=x='if(between(mod(t,10),8,8.5), (mod(t,10)-8)*2560, -200)':
+              y=200:w=120:h=320:c=white:t=fill:
+              enable='between(mod(t,10),8,8.5)',
+        drawbox=x=500:y=600:w=280:h=40:c=0x333333:t=fill" \
     -c:v libx264 \
     -preset ultrafast \
     -tune zerolatency \
