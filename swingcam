@@ -38,6 +38,7 @@ PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 STREAM_PID_FILE="$APP_DIR/stream.pid"
 STREAM_ARGS_FILE="$APP_DIR/stream.args"
 STREAM_LOG="$LOG_DIR/stream.log"
+LOG_ROTATE_PY="$SERVER_DIR/_log_rotate.py"
 
 # ── Helpers ──
 
@@ -337,38 +338,20 @@ _stream_is_running() {
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-_ensure_log_rotation() {
-    # Pi-side: hand the stream log to logrotate via an hourly cron entry.
-    # Rotates at 10MB, keeps 5 compressed backups. copytruncate keeps the
-    # daemon's open fd valid (works with our >> append redirect).
-    command -v logrotate >/dev/null 2>&1 || return 0
-    command -v crontab   >/dev/null 2>&1 || return 0
-
-    local cfg="$APP_DIR/logrotate.conf"
-    local state="$APP_DIR/logrotate.state"
-    local logrotate_bin
-    logrotate_bin=$(command -v logrotate)
-    local cron_line="0 * * * * $logrotate_bin -s $state $cfg >/dev/null 2>&1"
-
-    if [ ! -f "$cfg" ]; then
-        cat > "$cfg" <<EOF
-$STREAM_LOG {
-    size 10M
-    rotate 5
-    copytruncate
-    missingok
-    notifempty
-    compress
-    delaycompress
-}
-EOF
-        echo "  Installed logrotate config at $cfg"
+_cleanup_old_logrotate() {
+    # Migration: previous releases shelled out to logrotate via cron.
+    # Now we rotate inline by piping the daemon's stdout through Python's
+    # RotatingFileHandler, matching the server-side mechanism. Sweep up
+    # the old artifacts so the user doesn't end up with two rotators.
+    if command -v crontab >/dev/null 2>&1; then
+        local existing
+        existing=$(crontab -l 2>/dev/null || true)
+        if [ -n "$existing" ] && echo "$existing" | grep -qF "$APP_DIR/logrotate.conf"; then
+            echo "$existing" | grep -vF "$APP_DIR/logrotate.conf" | crontab -
+            echo "  Removed old logrotate cron entry"
+        fi
     fi
-
-    if ! crontab -l 2>/dev/null | grep -qF "$cfg"; then
-        (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
-        echo "  Installed hourly logrotate cron entry"
-    fi
+    rm -f "$APP_DIR/logrotate.conf" "$APP_DIR/logrotate.state"
 }
 
 cmd_stream_start() {
@@ -388,13 +371,19 @@ cmd_stream_start() {
     # One arg per line so values with spaces survive a roundtrip.
     printf '%s\n' "$@" > "$STREAM_ARGS_FILE"
 
-    _ensure_log_rotation
+    _cleanup_old_logrotate
 
     # Detach via setsid so the streamer becomes its own process group
     # leader; that lets `stream stop` send SIGTERM to the whole group
-    # (bash + rpicam-vid) with a single negative-pid kill. Append mode so
-    # logrotate's copytruncate doesn't lose the daemon's writes.
-    setsid nohup "$0" stream "$@" >> "$STREAM_LOG" 2>&1 < /dev/null &
+    # (bash + rpicam-vid + python) with a single negative-pid kill.
+    #
+    # The daemon's stdout pipes through _log_rotate.py so RotatingFileHandler
+    # rotates the log inline at 10MB × 5 backups, mirroring the server's
+    # self-rotation. The placeholder "_" fills $0 of the inner bash so
+    # "$@" maps cleanly to the original cmd_stream args.
+    setsid nohup bash -c "
+\"\$1\" stream \"\${@:2}\" 2>&1 | exec python3 -u \"$LOG_ROTATE_PY\" \"$STREAM_LOG\"
+" _ "$0" "$@" < /dev/null > /dev/null 2>&1 &
     local pid=$!
     disown "$pid" 2>/dev/null || true
     echo "$pid" > "$STREAM_PID_FILE"
