@@ -270,6 +270,10 @@
                     <button class="speed-btn" onclick="setSpeed(this, 0.5)">0.5x</button>
                     <button class="speed-btn active" onclick="setSpeed(this, 1)">1x</button>
                     <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
+                    {% if swing.clips and swing.clips[0].trim_start is not none %}
+                    <span style="margin-left:auto"></span>
+                    <button class="speed-btn" onclick="playTrimmed(this, {{ swing.clips[0].trim_start }}, {{ swing.clips[0].trim_end }})">Swing Only</button>
+                    {% endif %}
                 </div>
                 <div class="swing-actions">
                     <button class="tag-btn good {{ 'active' if swing.tag == 'good' else '' }}"
@@ -301,6 +305,22 @@
     </div>
 
     <script>
+        function playTrimmed(btn, trimStart, trimEnd) {
+            const card = btn.closest('.swing-card');
+            const videos = card.querySelectorAll('video');
+            videos.forEach(v => {
+                v.currentTime = trimStart;
+                v.play();
+                const onTime = () => {
+                    if (v.currentTime >= trimEnd) {
+                        v.pause();
+                        v.removeEventListener('timeupdate', onTime);
+                    }
+                };
+                v.addEventListener('timeupdate', onTime);
+            });
+        }
+
         function setSpeed(btn, rate) {
             const card = btn.closest('.swing-card');
             card.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));

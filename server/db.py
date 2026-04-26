@@ -51,6 +51,8 @@ class SwingDB:
                 camera_name TEXT NOT NULL,
                 angle TEXT,
                 filepath TEXT,
+                trim_start REAL,
+                trim_end REAL,
                 created_at TEXT DEFAULT (datetime('now'))
             );
 
@@ -89,12 +91,13 @@ class SwingDB:
         return swing_id
 
     def add_clip(
-        self, swing_id: str, camera_name: str, angle: str, filepath: str
+        self, swing_id: str, camera_name: str, angle: str, filepath: str,
+        trim_start: float | None = None, trim_end: float | None = None,
     ):
         self._conn.execute(
-            "INSERT INTO clips (swing_id, camera_name, angle, filepath) "
-            "VALUES (?, ?, ?, ?)",
-            (swing_id, camera_name, angle, filepath),
+            "INSERT INTO clips (swing_id, camera_name, angle, filepath, trim_start, trim_end) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (swing_id, camera_name, angle, filepath, trim_start, trim_end),
         )
         self._conn.commit()
 
@@ -134,7 +137,7 @@ class SwingDB:
             return None
 
         clips = self._conn.execute(
-            "SELECT camera_name, angle, filepath FROM clips WHERE swing_id = ?",
+            "SELECT camera_name, angle, filepath, trim_start, trim_end FROM clips WHERE swing_id = ?",
             (swing_id,),
         ).fetchall()
 
@@ -163,7 +166,7 @@ class SwingDB:
         records = []
         for row in rows:
             clips = self._conn.execute(
-                "SELECT camera_name, angle, filepath FROM clips WHERE swing_id = ?",
+                "SELECT camera_name, angle, filepath, trim_start, trim_end FROM clips WHERE swing_id = ?",
                 (row["id"],),
             ).fetchall()
             records.append(SwingRecord(

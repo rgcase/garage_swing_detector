@@ -172,6 +172,14 @@ class SwingCamServer:
 
             logger.info(f"Configured camera: {name} ({cam['angle']}) on port {cam['port']}")
 
+    def _compute_trim(self, spike_duration: float) -> tuple[float, float]:
+        """Compute trim start/end in seconds relative to clip start."""
+        pre = self.clip_saver.pre_seconds
+        pad = 0.5  # padding around the swing for context
+        trim_start = round(max(0, pre - pad), 2)
+        trim_end = round(pre + spike_duration + pad, 2)
+        return trim_start, trim_end
+
     def _on_swing_detected(self, event: SwingEvent):
         """
         Called when any camera detects a swing.
@@ -190,13 +198,15 @@ class SwingCamServer:
             self.db.create_swing(swing_id, event.trigger_time)
             self.gesture_detector.start_watching(swing_id)
             cam_cfg = self.config["cameras"][0]
+            trim_s, trim_e = self._compute_trim(event.spike_duration)
             self.clip_saver.save_clip_async(
                 buffer=self.buffers[event.camera_name],
                 trigger_time=event.trigger_time,
                 camera_name=event.camera_name,
                 swing_id=swing_id,
-                callback=lambda sid, cname, fp: self._on_clip_saved(
-                    sid, cname, cam_cfg.get("angle", "unknown"), fp
+                callback=lambda sid, cname, fp, ts=trim_s, te=trim_e: self._on_clip_saved(
+                    sid, cname, cam_cfg.get("angle", "unknown"), fp,
+                    trim_start=ts, trim_end=te,
                 ),
             )
         else:
@@ -231,6 +241,9 @@ class SwingCamServer:
                 self.db.create_swing(swing_id, shared_trigger)
                 self.gesture_detector.start_watching(swing_id)
 
+                max_spike = max(matched.spike_duration, event.spike_duration)
+                trim_s, trim_e = self._compute_trim(max_spike)
+
                 for evt in [matched, event]:
                     cam_cfg = next(
                         c for c in self.config["cameras"] if c["name"] == evt.camera_name
@@ -240,8 +253,8 @@ class SwingCamServer:
                         trigger_time=shared_trigger,
                         camera_name=evt.camera_name,
                         swing_id=swing_id,
-                        callback=lambda sid, cname, fp, angle=cam_cfg.get("angle", "unknown"):
-                            self._on_clip_saved(sid, cname, angle, fp),
+                        callback=lambda sid, cname, fp, angle=cam_cfg.get("angle", "unknown"), ts=trim_s, te=trim_e:
+                            self._on_clip_saved(sid, cname, angle, fp, trim_start=ts, trim_end=te),
                     )
                 logger.info(f"Correlated swing {swing_id} from {matched.camera_name} + {event.camera_name}")
             else:
@@ -279,13 +292,14 @@ class SwingCamServer:
                 cam_cfg = next(
                     c for c in self.config["cameras"] if c["name"] == event.camera_name
                 )
+                trim_s, trim_e = self._compute_trim(event.spike_duration)
                 self.clip_saver.save_clip_async(
                     buffer=self.buffers[event.camera_name],
                     trigger_time=event.trigger_time,
                     camera_name=event.camera_name,
                     swing_id=swing_id,
-                    callback=lambda sid, cname, fp, angle=cam_cfg.get("angle", "unknown"):
-                        self._on_clip_saved(sid, cname, angle, fp),
+                    callback=lambda sid, cname, fp, angle=cam_cfg.get("angle", "unknown"), ts=trim_s, te=trim_e:
+                        self._on_clip_saved(sid, cname, angle, fp, trim_start=ts, trim_end=te),
                 )
                 logger.info(f"Single-camera swing {swing_id} from {event.camera_name} (no correlation)")
 
@@ -312,9 +326,13 @@ class SwingCamServer:
             phases_json=json.dumps(result.get("phases", [])),
         )
 
-    def _on_clip_saved(self, swing_id: str, camera_name: str, angle: str, filepath: str | None):
+    def _on_clip_saved(
+        self, swing_id: str, camera_name: str, angle: str, filepath: str | None,
+        trim_start: float | None = None, trim_end: float | None = None,
+    ):
         if filepath:
-            self.db.add_clip(swing_id, camera_name, angle, filepath)
+            self.db.add_clip(swing_id, camera_name, angle, filepath,
+                             trim_start=trim_start, trim_end=trim_end)
             logger.info(f"Clip saved for swing {swing_id}: {filepath}")
             # Queue for pose analysis
             self.pose_analyzer.queue_analysis(swing_id, camera_name, filepath)

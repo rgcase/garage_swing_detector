@@ -41,6 +41,7 @@ class SwingEvent:
     camera_name: str
     motion_level: float    # Peak motion % that triggered detection
     confidence: float      # 0.0-1.0 detection confidence
+    spike_duration: float = 0.0  # How long the motion spike lasted (seconds)
 
 
 class SwingDetector:
@@ -326,6 +327,7 @@ class SwingDetector:
                 camera_name=self.camera_name,
                 motion_level=self._spike_peak,
                 confidence=confidence,
+                spike_duration=spike_duration,
             )
             logger.info(
                 f"[{self.camera_name}] Swing detected! "
