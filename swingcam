@@ -437,6 +437,9 @@ cmd_stream() {
     echo "  Bitrate:     $((BITRATE / 1000)) kbps"
     echo "  Streaming to: ${server_ip}:${port}"
 
+    # Ctrl+C exits cleanly instead of looping into the next retry.
+    trap 'echo; echo "Stream stopped."; exit 0' INT TERM
+
     # Retry loop — if the server isn't up yet, keep trying
     while true; do
         echo "Connecting to ${server_ip}:${port}..."
