@@ -34,6 +34,11 @@ ERR_FILE="$LOG_DIR/swingcam.err"
 PLIST_NAME="com.swingcam.server"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 
+# Pi streamer daemon (Linux side; macOS uses launchd above instead)
+STREAM_PID_FILE="$APP_DIR/stream.pid"
+STREAM_ARGS_FILE="$APP_DIR/stream.args"
+STREAM_LOG="$LOG_DIR/stream.log"
+
 # ── Helpers ──
 
 _green()  { printf "\033[32m%s\033[0m\n" "$1"; }
@@ -325,6 +330,119 @@ cmd_update() {
     _green "Update complete."
 }
 
+_stream_is_running() {
+    [ -f "$STREAM_PID_FILE" ] || return 1
+    local pid
+    pid=$(cat "$STREAM_PID_FILE" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+cmd_stream_start() {
+    if [ "$#" -eq 0 ]; then
+        _red "Usage: swingcam stream start <ff|dtl> [server]"
+        exit 1
+    fi
+
+    if _stream_is_running; then
+        local pid
+        pid=$(cat "$STREAM_PID_FILE")
+        _yellow "Stream already running (PID $pid)"
+        return 0
+    fi
+
+    mkdir -p "$APP_DIR" "$LOG_DIR"
+    # One arg per line so values with spaces survive a roundtrip.
+    printf '%s\n' "$@" > "$STREAM_ARGS_FILE"
+
+    # Detach via setsid so the streamer becomes its own process group
+    # leader; that lets `stream stop` send SIGTERM to the whole group
+    # (bash + rpicam-vid) with a single negative-pid kill.
+    setsid nohup "$0" stream "$@" > "$STREAM_LOG" 2>&1 < /dev/null &
+    local pid=$!
+    disown "$pid" 2>/dev/null || true
+    echo "$pid" > "$STREAM_PID_FILE"
+
+    sleep 1
+    if _stream_is_running; then
+        _green "Stream started (PID $pid)"
+        echo "  Logs:  $STREAM_LOG"
+    else
+        _red "Failed to start. Check $STREAM_LOG"
+        rm -f "$STREAM_PID_FILE"
+        return 1
+    fi
+}
+
+cmd_stream_stop() {
+    if ! _stream_is_running; then
+        _yellow "Stream not running."
+        rm -f "$STREAM_PID_FILE"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$STREAM_PID_FILE")
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+
+    for _ in 1 2 3 4 5; do
+        _stream_is_running || break
+        sleep 1
+    done
+
+    if _stream_is_running; then
+        _yellow "Did not stop in 5s, sending SIGKILL..."
+        kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
+    fi
+
+    rm -f "$STREAM_PID_FILE"
+    _green "Stream stopped."
+}
+
+cmd_stream_restart() {
+    echo "Restarting stream..."
+    if [ "$#" -gt 0 ]; then
+        cmd_stream_stop
+        cmd_stream_start "$@"
+    elif [ -f "$STREAM_ARGS_FILE" ]; then
+        local args=()
+        while IFS= read -r line; do
+            args+=("$line")
+        done < "$STREAM_ARGS_FILE"
+        cmd_stream_stop
+        cmd_stream_start "${args[@]}"
+    else
+        _red "No saved args. Use: swingcam stream start <ff|dtl> [server]"
+        exit 1
+    fi
+}
+
+cmd_stream_status() {
+    echo "── stream status ──"
+    if _stream_is_running; then
+        local pid
+        pid=$(cat "$STREAM_PID_FILE")
+        _green "Running (PID $pid)"
+        if [ -f "$STREAM_ARGS_FILE" ]; then
+            local args
+            args=$(tr '\n' ' ' < "$STREAM_ARGS_FILE")
+            echo "  Args: $args"
+        fi
+    else
+        _red "Not running"
+    fi
+    echo ""
+    echo "── Recent logs ──"
+    tail -10 "$STREAM_LOG" 2>/dev/null || echo "(no log yet)"
+}
+
+cmd_stream_logs() {
+    if [ ! -f "$STREAM_LOG" ]; then
+        _red "No stream log yet. Run: swingcam stream start <ff|dtl> [server]"
+        return 1
+    fi
+    tail -f "$STREAM_LOG"
+}
+
 cmd_stream() {
     # Parse --test flag; remaining args are positional.
     local test_mode=0
@@ -479,11 +597,21 @@ Commands:
 
 Streaming commands:
   stream <ff|dtl> <server> [port]
-                  Stream the Pi camera to the server. Angle selects port:
+                  Stream the Pi camera to the server (foreground).
+                  Angle selects port:
                     ff  → 9556 (front-facing)
                     dtl → 9557 (down-the-line)
                     Server is a hostname or IP (e.g. "swingcam" or "192.168.4.234").
                     Port defaults based on angle but can be overridden.
+
+  stream start <ff|dtl> [server] [port]
+                  Same as `stream` but detached as a background daemon.
+                  Logs go to ~/.swingcam/logs/stream.log.
+
+  stream stop     Stop the detached stream daemon.
+  stream restart  Restart with the args saved from `stream start`.
+  stream status   Show daemon state and recent log lines.
+  stream logs     Tail the stream log (Ctrl+C to stop).
 
   stream --test <ff|dtl> [server] [port]
                   Send a synthetic test stream that simulates a swing
@@ -513,7 +641,17 @@ case "${1:-help}" in
     logs)    cmd_logs ;;
     config)  cmd_config ;;
     update)  cmd_update "${2:-main}" ;;
-    stream)  shift; cmd_stream "$@" ;;
+    stream)
+        shift
+        case "${1:-}" in
+            start)   shift; cmd_stream_start "$@" ;;
+            stop)    cmd_stream_stop ;;
+            restart) shift; cmd_stream_restart "$@" ;;
+            status)  cmd_stream_status ;;
+            logs)    cmd_stream_logs ;;
+            *)       cmd_stream "$@" ;;
+        esac
+        ;;
     help|--help|-h) cmd_help ;;
     *)
         _red "Unknown command: $1"
