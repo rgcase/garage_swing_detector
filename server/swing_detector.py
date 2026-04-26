@@ -93,6 +93,10 @@ class SwingDetector:
 
         # Track the current spike for duration measurement
         self._spike_start: float | None = None
+        # Two consecutive grayscale frames captured at peak motion during the
+        # spike. Used by optical flow analysis at spike-end so we don't compute
+        # flow against the post-motion still frame (which has nothing to track).
+        self._peak_pair: tuple[np.ndarray, np.ndarray] | None = None
         self._spike_peak: float = 0
         self._spike_reported = False
 
@@ -117,23 +121,29 @@ class SwingDetector:
             return False
         return all(pct < self._still_threshold for pct in still_samples)
 
-    def _compute_optical_flow_score(self, gray: np.ndarray) -> float:
+    def _compute_optical_flow_score(self) -> float:
         """Compute optical flow on the ROI and return a swing-likeness score.
+
+        Uses the two consecutive frames captured at peak motion during the
+        spike (self._peak_pair). Computing flow on those frames matters —
+        running flow on post-motion frames produces 0 because Farneback
+        has nothing to track once the moving object has stopped.
 
         A golf swing produces:
         - High peak flow magnitude (club/arms moving fast)
         - Concentrated flow (motion in a small region, not diffuse)
-        - Dominant vertical/arc direction
+        - Dominant direction (coherent translation)
 
         Returns 0.0-1.0 score.
         """
-        if self._prev_gray_full is None:
+        if self._peak_pair is None:
             return 0.0
 
-        h, w = gray.shape
+        prev_full, curr_full = self._peak_pair
+        h, w = curr_full.shape
         y1, y2, x1, x2 = self._get_roi_slice(h, w)
-        roi_curr = gray[y1:y2, x1:x2]
-        roi_prev = self._prev_gray_full[y1:y2, x1:x2]
+        roi_curr = curr_full[y1:y2, x1:x2]
+        roi_prev = prev_full[y1:y2, x1:x2]
 
         if roi_curr.size == 0 or roi_prev.size == 0:
             return 0.0
@@ -246,19 +256,24 @@ class SwingDetector:
                 self._spike_start = now
                 self._spike_peak = motion_pct
                 self._spike_reported = False
+                # Capture the prev-and-current frame pair as our flow sample.
+                # Both frames are mid-motion since we just transitioned into
+                # the spike, so the flow algorithm has matchable content.
+                if self._prev_gray_full is not None:
+                    self._peak_pair = (self._prev_gray_full.copy(), gray.copy())
             else:
+                # Update peak_pair whenever we see a new motion peak so flow
+                # is computed at the most active part of the swing.
+                if motion_pct > self._spike_peak and self._prev_gray_full is not None:
+                    self._peak_pair = (self._prev_gray_full.copy(), gray.copy())
                 self._spike_peak = max(self._spike_peak, motion_pct)
         else:
             if self._spike_start is not None and not self._spike_reported:
                 # Spike just ended — evaluate it
                 spike_duration = now - self._spike_start
-                self._evaluate_spike(now, spike_duration, gray)
-            if not is_moving:
-                if self._spike_start is not None and (now - self._spike_start) > self.SPIKE_MAX_SECONDS * 2:
-                    # Spike has been going too long, abandon it
-                    pass
-                if not is_moving:
-                    self._spike_start = None
+                self._evaluate_spike(now, spike_duration)
+            self._spike_start = None
+            self._peak_pair = None
 
         # Also check for spikes that have been going too long
         if self._spike_start is not None:
@@ -275,7 +290,7 @@ class SwingDetector:
         self._prev_gray = gray_blurred
         self._prev_gray_full = gray
 
-    def _evaluate_spike(self, now: float, spike_duration: float, gray: np.ndarray):
+    def _evaluate_spike(self, now: float, spike_duration: float):
         """Evaluate a completed motion spike to determine if it's a swing."""
         self._spike_reported = True
 
@@ -301,7 +316,7 @@ class SwingDetector:
         duration_score = 1.0 if spike_duration < 0.6 else max(0.3, 1.0 - (spike_duration - 0.6))
 
         # Check 3: Optical flow — is this swing-like motion?
-        flow_score = self._compute_optical_flow_score(gray)
+        flow_score = self._compute_optical_flow_score()
 
         # Check 4: Motion intensity — swings produce high peak motion
         intensity_score = min(1.0, self._spike_peak / (self.motion_area_pct * 5))
