@@ -89,6 +89,12 @@ class ClipSaver:
             "-preset", "fast",
             "-crf", "23",
             "-pix_fmt", "yuv420p",
+            # Dense keyframes (~1 per second at 30fps) so the web UI can
+            # scrub frame-accurately. Default GOP of 250 leaves ~one keyframe
+            # per clip, which makes mid-clip seeks render frozen frames.
+            "-g", str(int(self.fps)),
+            "-keyint_min", str(int(self.fps)),
+            "-sc_threshold", "0",
             "-movflags", "+faststart",
             str(filepath),
         ]
