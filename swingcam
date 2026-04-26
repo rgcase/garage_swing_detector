@@ -337,6 +337,40 @@ _stream_is_running() {
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
+_ensure_log_rotation() {
+    # Pi-side: hand the stream log to logrotate via an hourly cron entry.
+    # Rotates at 10MB, keeps 5 compressed backups. copytruncate keeps the
+    # daemon's open fd valid (works with our >> append redirect).
+    command -v logrotate >/dev/null 2>&1 || return 0
+    command -v crontab   >/dev/null 2>&1 || return 0
+
+    local cfg="$APP_DIR/logrotate.conf"
+    local state="$APP_DIR/logrotate.state"
+    local logrotate_bin
+    logrotate_bin=$(command -v logrotate)
+    local cron_line="0 * * * * $logrotate_bin -s $state $cfg >/dev/null 2>&1"
+
+    if [ ! -f "$cfg" ]; then
+        cat > "$cfg" <<EOF
+$STREAM_LOG {
+    size 10M
+    rotate 5
+    copytruncate
+    missingok
+    notifempty
+    compress
+    delaycompress
+}
+EOF
+        echo "  Installed logrotate config at $cfg"
+    fi
+
+    if ! crontab -l 2>/dev/null | grep -qF "$cfg"; then
+        (crontab -l 2>/dev/null; echo "$cron_line") | crontab -
+        echo "  Installed hourly logrotate cron entry"
+    fi
+}
+
 cmd_stream_start() {
     if [ "$#" -eq 0 ]; then
         _red "Usage: swingcam stream start <ff|dtl> [server]"
@@ -354,10 +388,13 @@ cmd_stream_start() {
     # One arg per line so values with spaces survive a roundtrip.
     printf '%s\n' "$@" > "$STREAM_ARGS_FILE"
 
+    _ensure_log_rotation
+
     # Detach via setsid so the streamer becomes its own process group
     # leader; that lets `stream stop` send SIGTERM to the whole group
-    # (bash + rpicam-vid) with a single negative-pid kill.
-    setsid nohup "$0" stream "$@" > "$STREAM_LOG" 2>&1 < /dev/null &
+    # (bash + rpicam-vid) with a single negative-pid kill. Append mode so
+    # logrotate's copytruncate doesn't lose the daemon's writes.
+    setsid nohup "$0" stream "$@" >> "$STREAM_LOG" 2>&1 < /dev/null &
     local pid=$!
     disown "$pid" 2>/dev/null || true
     echo "$pid" > "$STREAM_PID_FILE"
@@ -558,10 +595,14 @@ cmd_stream() {
     # Ctrl+C exits cleanly instead of looping into the next retry.
     trap 'echo; echo "Stream stopped."; exit 0' INT TERM
 
+    # Quiet libcamera's INFO chatter; warnings/errors still surface.
+    export LIBCAMERA_LOG_LEVELS='*:WARN'
+
     # Retry loop — if the server isn't up yet, keep trying
     while true; do
         echo "Connecting to ${server_ip}:${port}..."
         rpicam-vid \
+            --verbose 0 \
             -t 0 \
             --width "$WIDTH" \
             --height "$HEIGHT" \
