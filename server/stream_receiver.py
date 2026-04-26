@@ -1,7 +1,12 @@
 """
-Stream receiver: accepts an H.264 TCP stream from a Pi,
-decodes frames via OpenCV/FFmpeg, and stores them in a
+Stream receiver: accepts video from Pi cameras (TCP push) or IP cameras
+(RTSP/URL pull), decodes frames via FFmpeg, and stores them in a
 thread-safe circular buffer.
+
+Supported source formats:
+  - TCP listen (Pi push):  "tcp://0.0.0.0:9556"  or  host + port in config
+  - RTSP pull (IP camera): "rtsp://192.168.4.50:554/stream1"
+  - Any FFmpeg input URL:  "http://...", "udp://...", etc.
 """
 
 import logging
@@ -62,36 +67,49 @@ class CircularFrameBuffer:
 
 class StreamReceiver:
     """
-    Listens for an incoming H.264 TCP stream from a Pi,
-    decodes it, and feeds frames into a circular buffer.
+    Receives video from a camera source, decodes it via FFmpeg,
+    and feeds frames into a circular buffer.
 
-    Uses FFmpeg as a subprocess to handle the TCP listening
-    and H.264 → raw frame decoding, then reads raw frames
-    from FFmpeg's stdout via pipe.
+    Supports two modes:
+      - TCP listen: server waits for Pi to push H.264 (source starts with "tcp://")
+      - Pull: server connects to an RTSP/HTTP/etc URL (anything else)
     """
 
     def __init__(
         self,
         name: str,
-        host: str,
-        port: int,
+        source: str,
         buffer: CircularFrameBuffer,
         width: int = 1280,
         height: int = 720,
         fps: float = 30.0,
     ):
         self.name = name
-        self.host = host
-        self.port = port
+        self.source = source
         self.buffer = buffer
         self.width = width
         self.height = height
         self.fps = fps
 
+        # For status display
+        self.port = self._extract_port()
+
         self._process: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
         self._running = False
         self._on_frame_callbacks: list = []
+
+    def _extract_port(self) -> int | None:
+        """Extract port number from source URL for display purposes."""
+        try:
+            if ":" in self.source:
+                # tcp://0.0.0.0:9556?listen=1 or rtsp://host:554/path
+                part = self.source.split("://", 1)[-1]
+                port_str = part.split(":")[1].split("/")[0].split("?")[0]
+                return int(port_str)
+        except (IndexError, ValueError):
+            pass
+        return None
 
     @property
     def is_connected(self) -> bool:
@@ -108,7 +126,7 @@ class StreamReceiver:
             target=self._run_loop, name=f"recv-{self.name}", daemon=True
         )
         self._thread.start()
-        logger.info(f"[{self.name}] Receiver started, listening on {self.host}:{self.port}")
+        logger.info(f"[{self.name}] Receiver started, source: {self.source}")
 
     def stop(self):
         self._running = False
@@ -116,6 +134,39 @@ class StreamReceiver:
             self._process.terminate()
         if self._thread:
             self._thread.join(timeout=5)
+
+    def _build_ffmpeg_cmd(self) -> list[str]:
+        """Build the FFmpeg command based on source type."""
+        source = self.source
+        is_tcp_listen = source.startswith("tcp://")
+        is_rtsp = source.startswith("rtsp://")
+
+        cmd = ["ffmpeg", "-y", "-loglevel", "warning"]
+
+        if is_tcp_listen:
+            # Pi push mode: listen for incoming TCP H.264 stream
+            if "?listen" not in source:
+                source += "?listen=1"
+            cmd += ["-f", "h264", "-i", source]
+        elif is_rtsp:
+            # RTSP pull mode: connect to IP camera
+            cmd += [
+                "-rtsp_transport", "tcp",  # TCP is more reliable than UDP
+                "-i", source,
+            ]
+        else:
+            # Generic URL (http, udp, file, device, etc.)
+            cmd += ["-i", source]
+
+        # Output: raw BGR frames to stdout
+        cmd += [
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{self.width}x{self.height}",
+            "-an",
+            "pipe:1",
+        ]
+        return cmd
 
     def _run_loop(self):
         """Outer loop: restarts FFmpeg if the stream disconnects."""
@@ -128,24 +179,11 @@ class StreamReceiver:
 
     def _receive_stream(self):
         """
-        Launch FFmpeg to listen on TCP, decode H.264, and pipe raw
+        Launch FFmpeg to receive and decode the stream, piping raw
         BGR24 frames to us via stdout.
         """
         frame_size = self.width * self.height * 3  # BGR24
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-loglevel", "warning",
-            # Input: listen for TCP connection from the Pi
-            "-f", "h264",
-            "-i", f"tcp://{self.host}:{self.port}?listen=1",
-            # Output: raw BGR frames to stdout
-            "-f", "rawvideo",
-            "-pix_fmt", "bgr24",
-            "-an",  # no audio
-            "pipe:1",
-        ]
+        cmd = self._build_ffmpeg_cmd()
 
         logger.info(f"[{self.name}] Starting FFmpeg: {' '.join(cmd)}")
         self._process = subprocess.Popen(

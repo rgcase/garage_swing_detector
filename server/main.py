@@ -134,11 +134,17 @@ class SwingCamServer:
             )
             self.buffers[name] = buf
 
-            # Stream receiver
+            # Stream receiver — supports both formats:
+            #   source: "rtsp://192.168.4.50:554/stream1"  (RTSP/URL pull)
+            #   host + port: "0.0.0.0" / 9556              (TCP listen for Pi push)
+            if "source" in cam:
+                source = cam["source"]
+            else:
+                source = f"tcp://{cam['host']}:{cam['port']}"
+
             receiver = StreamReceiver(
                 name=name,
-                host=cam["host"],
-                port=cam["port"],
+                source=source,
                 buffer=buf,
                 width=self._width,
                 height=self._height,

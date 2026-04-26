@@ -13,15 +13,25 @@ stream:
   fps: 30
 
 cameras:
+  # Pi cameras (TCP listen — Pi pushes H.264 to server):
   - name: "face-on"
-    host: "0.0.0.0"          # Listen address for incoming stream
-    port: 9556               # Port the Pi streams to (matches `swingcam stream ff`)
-    angle: "face-on"         # face-on | dtl (down-the-line)
+    host: "0.0.0.0"
+    port: 9556               # matches `swingcam stream ff`
+    angle: "face-on"
 
   - name: "dtl"
     host: "0.0.0.0"
     port: 9557               # matches `swingcam stream dtl`
     angle: "dtl"
+
+  # IP cameras (RTSP pull — server connects to camera):
+  # - name: "face-on"
+  #   source: "rtsp://192.168.4.50:554/stream1"
+  #   angle: "face-on"
+  #
+  # - name: "dtl"
+  #   source: "rtsp://192.168.4.51:554/stream1"
+  #   angle: "dtl"
 
 detection:
   # Motion detection via frame differencing
