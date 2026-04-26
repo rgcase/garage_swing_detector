@@ -428,7 +428,7 @@ cmd_stream() {
     local WIDTH=1280
     local HEIGHT=720
     local FRAMERATE=30          # 30 for Pi Zero W, 60 for Pi Zero 2 W
-    local BITRATE=4000000       # 4 Mbps
+    local BITRATE=8000000       # 8 Mbps
     local INTRA_FRAMES=$FRAMERATE  # keyframe every ~1s (frame count, not ms)
     local MAX_GAIN=4               # cap analog gain to limit noise (default ~16)
 
