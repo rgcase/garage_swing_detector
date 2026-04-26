@@ -8,6 +8,7 @@ database, and the web UI.
 import logging
 import logging.handlers
 import signal
+import socket
 import sys
 import threading
 import time
@@ -314,6 +315,29 @@ class SwingCamServer:
         else:
             logger.warning(f"Failed to save clip for swing {swing_id} ({camera_name})")
 
+    @staticmethod
+    def _lan_ip() -> str:
+        """Best-effort LAN IP, for printing actionable stream URLs."""
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        except OSError:
+            return "localhost"
+        finally:
+            s.close()
+
+    def _log_stream_targets(self):
+        lan_ip = self._lan_ip()
+        for cam in self.config["cameras"]:
+            host = cam["host"]
+            if host in ("0.0.0.0", "::"):
+                host = lan_ip
+            logger.info(
+                f"Stream target [{cam['name']}/{cam['angle']}]: "
+                f"tcp://{host}:{cam['port']}"
+            )
+
     def run(self):
         """Start everything."""
         logger.info("=" * 50)
@@ -349,6 +373,7 @@ class SwingCamServer:
         )
         server_thread.start()
         logger.info(f"Web UI available at http://localhost:{web_cfg['web_port']}")
+        self._log_stream_targets()
 
         # Block until Ctrl+C
         try:

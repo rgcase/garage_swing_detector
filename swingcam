@@ -53,6 +53,35 @@ _get_web_port() {
     fi
 }
 
+_print_stream_targets() {
+    # Requires venv (Python + PyYAML). Caller must ensure venv exists.
+    [ -x "$VENV_DIR/bin/python" ] || return 0
+    [ -f "$CONFIG_FILE" ] || return 0
+    "$VENV_DIR/bin/python" - "$CONFIG_FILE" <<'PY'
+import socket, sys, yaml
+with open(sys.argv[1]) as f:
+    cfg = yaml.safe_load(f) or {}
+
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.connect(("8.8.8.8", 80))
+    lan_ip = s.getsockname()[0]
+except OSError:
+    lan_ip = "localhost"
+finally:
+    s.close()
+
+for cam in cfg.get("cameras", []):
+    host = cam.get("host", "0.0.0.0")
+    if host in ("0.0.0.0", "::"):
+        host = lan_ip
+    name = cam.get("name", "?")
+    angle = cam.get("angle", "")
+    suffix = f" ({angle})" if angle and angle != name else ""
+    print(f"  Stream:  {name}{suffix}  →  tcp://{host}:{cam['port']}")
+PY
+}
+
 _ensure_app_dir() {
     if [ ! -d "$APP_DIR" ]; then
         echo "Creating $APP_DIR..."
@@ -129,7 +158,10 @@ _is_running() {
 }
 
 _pid() {
-    launchctl list "$PLIST_NAME" 2>/dev/null | head -1 | awk '{print $1}'
+    # `launchctl list <label>` returns a dict like:  "PID" = 12345;
+    # Extract just the number; empty if loaded-but-not-running.
+    launchctl list "$PLIST_NAME" 2>/dev/null \
+        | awk -F'"PID" = ' '/"PID"/ {sub(/;.*/, "", $2); print $2; exit}'
 }
 
 # ── Commands ──
@@ -159,6 +191,7 @@ cmd_start() {
         pid=$(_pid)
         _green "swing-cam started (PID $pid)"
         echo "  Web UI:  http://localhost:$port"
+        _print_stream_targets
         echo "  Config:  $CONFIG_FILE"
         echo "  Clips:   $APP_DIR/clips"
         echo "  Logs:    $LOG_FILE"
