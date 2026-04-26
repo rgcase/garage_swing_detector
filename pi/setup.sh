@@ -16,26 +16,28 @@ fi
 read -p "Server IP address [192.168.1.100]: " SERVER_IP
 SERVER_IP="${SERVER_IP:-192.168.1.100}"
 
-read -p "Server port [8888]: " PORT
-PORT="${PORT:-8888}"
-
-read -p "Camera ID (e.g. face-on, dtl) [cam1]: " CAMERA_ID
-CAMERA_ID="${CAMERA_ID:-cam1}"
+read -p "Camera angle (ff = front-facing, dtl = down-the-line) [ff]: " ANGLE
+ANGLE="${ANGLE:-ff}"
+case "$ANGLE" in
+    ff|front-facing)   ANGLE="ff" ;;
+    dtl|down-the-line) ANGLE="dtl" ;;
+    *) echo "Invalid angle: $ANGLE (must be ff or dtl)"; exit 1 ;;
+esac
 
 # Write environment file for the systemd service
 sudo tee /etc/default/swing-cam > /dev/null <<EOF
-SERVER_IP=${SERVER_IP}
-PORT=${PORT}
-CAMERA_ID=${CAMERA_ID}
+SWINGCAM_SERVER=${SERVER_IP}
+SWINGCAM_ANGLE=${ANGLE}
 EOF
 
 # Install systemd service
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
 sudo cp "${SCRIPT_DIR}/swing-cam-stream.service" /etc/systemd/system/
-chmod +x "${SCRIPT_DIR}/stream.sh"
+chmod +x "${REPO_DIR}/swingcam"
 
-# Update the service file with the actual script path
-sudo sed -i "s|/home/pi/swing-cam|${SCRIPT_DIR}|g" /etc/systemd/system/swing-cam-stream.service
+# Update the service file with the actual swingcam path
+sudo sed -i "s|/home/pi/swing-cam/swingcam|${REPO_DIR}/swingcam|g" /etc/systemd/system/swing-cam-stream.service
 
 sudo systemctl daemon-reload
 sudo systemctl enable swing-cam-stream

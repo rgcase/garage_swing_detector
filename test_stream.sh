@@ -12,7 +12,7 @@
 set -euo pipefail
 
 SERVER_HOST="${1:-localhost}"
-SERVER_PORT="${2:-8888}"
+SERVER_PORT="${2:-9556}"
 
 if ! command -v ffmpeg &>/dev/null; then
     echo "Error: ffmpeg not found. Install it first."

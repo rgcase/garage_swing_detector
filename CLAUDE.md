@@ -59,23 +59,26 @@ Web UI runs at `http://localhost:8080` by default.
 The Pi runs Raspberry Pi OS Lite (Bookworm). `rpicam-vid` is used for streaming (part of the default install). No Python needed on the Pi.
 
 ```bash
-# Test stream manually
-./pi/stream.sh <server_ip> <port>
+# Stream manually (angle → port: ff=9556, dtl=9557)
+./swingcam stream ff <server_ip>
+./swingcam stream dtl <server_ip>
 ```
+
+`pi/setup.sh` installs the stream as a systemd service.
 
 ### Testing without a Pi
 
 You can simulate a camera stream with FFmpeg from any machine:
 
 ```bash
-# Stream a test video file to the server
-ffmpeg -re -i test_swing.mp4 -c:v libx264 -f h264 tcp://<server_ip>:8888
+# Stream a test video file to the server (ff = 9556, dtl = 9557)
+ffmpeg -re -i test_swing.mp4 -c:v libx264 -f h264 tcp://<server_ip>:9556
 ```
 
 Or generate a synthetic stream:
 
 ```bash
-ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -c:v libx264 -f h264 tcp://<server_ip>:8888
+ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -c:v libx264 -f h264 tcp://<server_ip>:9556
 ```
 
 ## Configuration

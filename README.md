@@ -45,7 +45,7 @@ swings, and serves a web UI for reviewing and tagging clips.
 
 4. The stream starts automatically on boot. To test manually:
    ```bash
-   ./stream.sh
+   ./swingcam stream ff <server_ip>    # or: dtl
    ```
 
 ### Server Setup
@@ -83,9 +83,8 @@ See `server/config.yaml` for all options. Key settings:
 ```
 swing-cam/
 ├── pi/
-│   ├── stream.sh                 # Camera streaming script
 │   ├── setup.sh                  # Pi setup/install script
-│   └── swing-cam-stream.service  # systemd unit file
+│   └── swing-cam-stream.service  # systemd unit file (calls `swingcam stream`)
 ├── server/
 │   ├── main.py                   # Entry point
 │   ├── config.yaml               # Configuration

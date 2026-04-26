@@ -15,13 +15,13 @@ stream:
 cameras:
   - name: "face-on"
     host: "0.0.0.0"          # Listen address for incoming stream
-    port: 8888               # Port the Pi streams to
+    port: 9556               # Port the Pi streams to (matches `swingcam stream ff`)
     angle: "face-on"         # face-on | dtl (down-the-line)
 
   # Uncomment when you add a second camera:
   # - name: "dtl"
   #   host: "0.0.0.0"
-  #   port: 8889
+  #   port: 9557             # matches `swingcam stream dtl`
   #   angle: "dtl"
 
 detection:

@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# swingcam — CLI for managing the swing-cam server daemon on macOS.
+# swingcam — CLI for the swing-cam server daemon (macOS) and Pi streamer.
 #
-# Usage:
+# Server commands (macOS):
 #   swingcam start        Start the server daemon
 #   swingcam stop         Stop the server daemon
 #   swingcam restart      Restart the server daemon
@@ -10,6 +10,12 @@
 #   swingcam logs         Tail the server logs
 #   swingcam update [SHA] Pull latest main (or a specific SHA) and restart
 #   swingcam config       Open the config file in $EDITOR
+#
+# Pi commands (Raspberry Pi):
+#   swingcam stream <ff|dtl> [server_ip]
+#                         Stream H.264 video to the server. The angle
+#                         (front-facing or down-the-line) selects which
+#                         server port to connect to.
 #
 
 set -euo pipefail
@@ -286,6 +292,87 @@ cmd_update() {
     _green "Update complete."
 }
 
+cmd_stream() {
+    local angle_arg="${1:-}"
+    local server_ip_arg="${2:-}"
+
+    local angle port
+    case "$angle_arg" in
+        ff|front-facing)   angle="ff";  port=9556 ;;
+        dtl|down-the-line) angle="dtl"; port=9557 ;;
+        "")
+            _red "Usage: swingcam stream <ff|dtl> [server_ip]"
+            exit 1
+            ;;
+        *)
+            _red "Unknown angle: '$angle_arg' (must be ff|front-facing or dtl|down-the-line)"
+            exit 1
+            ;;
+    esac
+
+    if ! command -v rpicam-vid &>/dev/null; then
+        _red "rpicam-vid not found — this command must run on a Raspberry Pi."
+        exit 1
+    fi
+
+    # Resolve server IP: arg > env > stored file > prompt
+    local pi_env="$APP_DIR/pi.env"
+    local server_ip=""
+    if [ -n "$server_ip_arg" ]; then
+        server_ip="$server_ip_arg"
+    elif [ -n "${SWINGCAM_SERVER:-}" ]; then
+        server_ip="$SWINGCAM_SERVER"
+    elif [ -f "$pi_env" ]; then
+        # shellcheck disable=SC1090
+        source "$pi_env"
+        server_ip="${SWINGCAM_SERVER:-}"
+    fi
+
+    if [ -z "$server_ip" ]; then
+        mkdir -p "$APP_DIR"
+        read -rp "Server IP address: " server_ip
+        if [ -z "$server_ip" ]; then
+            _red "Server IP required."
+            exit 1
+        fi
+        printf 'SWINGCAM_SERVER=%s\n' "$server_ip" > "$pi_env"
+        _green "Saved server IP to $pi_env"
+    fi
+
+    # Stream parameters — keep in sync with server stream config
+    local WIDTH=1280
+    local HEIGHT=720
+    local FRAMERATE=30          # 30 for Pi Zero W, 60 for Pi Zero 2 W
+    local BITRATE=4000000       # 4 Mbps
+    local KEYFRAME_PERIOD=1000  # ms — keyframe every 1s
+
+    echo "swing-cam streamer ($angle)"
+    echo "  Resolution:  ${WIDTH}x${HEIGHT} @ ${FRAMERATE}fps"
+    echo "  Bitrate:     $((BITRATE / 1000)) kbps"
+    echo "  Streaming to: ${server_ip}:${port}"
+
+    # Retry loop — if the server isn't up yet, keep trying
+    while true; do
+        echo "Connecting to ${server_ip}:${port}..."
+        rpicam-vid \
+            -t 0 \
+            --width "$WIDTH" \
+            --height "$HEIGHT" \
+            --framerate "$FRAMERATE" \
+            --bitrate "$BITRATE" \
+            --codec h264 \
+            --profile high \
+            --level 4.1 \
+            --inline \
+            --flush \
+            --keyframe "$KEYFRAME_PERIOD" \
+            -o "tcp://${server_ip}:${port}" || true
+
+        echo "Stream ended. Retrying in 5s..."
+        sleep 5
+    done
+}
+
 cmd_help() {
     cat <<HELP
 swingcam — manage the swing-cam server daemon
@@ -298,6 +385,14 @@ Commands:
   logs            Tail the server logs (Ctrl+C to stop)
   config          Edit the config file (restarts server if running)
   update [SHA]    Pull latest main (or checkout a specific SHA) and restart
+
+Pi commands:
+  stream <ff|dtl> [server_ip]
+                  Stream the Pi camera to the server. Angle selects port:
+                    ff  → 9556 (front-facing)
+                    dtl → 9557 (down-the-line)
+                  Server IP is read from arg, \$SWINGCAM_SERVER, or
+                  $APP_DIR/pi.env (prompted on first run).
 
 Data directory: $APP_DIR
   config.yaml     Server configuration
@@ -321,6 +416,7 @@ case "${1:-help}" in
     logs)    cmd_logs ;;
     config)  cmd_config ;;
     update)  cmd_update "${2:-main}" ;;
+    stream)  cmd_stream "${2:-}" "${3:-}" ;;
     help|--help|-h) cmd_help ;;
     *)
         _red "Unknown command: $1"

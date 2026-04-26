@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/swing-cam
-ExecStart=/home/pi/swing-cam/stream.sh ${SERVER_IP} ${PORT}
+ExecStart=/home/pi/swing-cam/swingcam stream ${SWINGCAM_ANGLE} ${SWINGCAM_SERVER}
 Restart=always
 RestartSec=10
 User=pi
