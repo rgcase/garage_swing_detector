@@ -140,6 +140,8 @@ class StreamReceiver:
         source = self.source
         is_tcp_listen = source.startswith("tcp://")
         is_rtsp = source.startswith("rtsp://")
+        is_avfoundation = source.startswith("avfoundation://")
+        is_v4l2 = source.startswith("v4l2://") or source.startswith("/dev/video")
 
         cmd = ["ffmpeg", "-y", "-loglevel", "warning"]
 
@@ -151,11 +153,29 @@ class StreamReceiver:
         elif is_rtsp:
             # RTSP pull mode: connect to IP camera
             cmd += [
-                "-rtsp_transport", "tcp",  # TCP is more reliable than UDP
+                "-rtsp_transport", "tcp",
                 "-i", source,
             ]
+        elif is_avfoundation:
+            # macOS local camera (USB webcam, built-in)
+            device_index = source.split("://", 1)[1]
+            cmd += [
+                "-f", "avfoundation",
+                "-framerate", str(self.fps),
+                "-video_size", f"{self.width}x{self.height}",
+                "-i", device_index,
+            ]
+        elif is_v4l2:
+            # Linux local camera (USB webcam)
+            device = source.replace("v4l2://", "")
+            cmd += [
+                "-f", "v4l2",
+                "-framerate", str(self.fps),
+                "-video_size", f"{self.width}x{self.height}",
+                "-i", device,
+            ]
         else:
-            # Generic URL (http, udp, file, device, etc.)
+            # Generic URL (http, udp, file, etc.)
             cmd += ["-i", source]
 
         # Output: raw BGR frames to stdout

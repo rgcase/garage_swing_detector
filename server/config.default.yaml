@@ -24,13 +24,17 @@ cameras:
     port: 9557               # matches `swingcam stream dtl`
     angle: "dtl"
 
-  # IP cameras (RTSP pull — server connects to camera):
+  # IP cameras (RTSP — server pulls from camera):
   # - name: "face-on"
   #   source: "rtsp://192.168.4.50:554/stream1"
   #   angle: "face-on"
   #
+  # USB cameras (plugged into the server):
+  # - name: "face-on"
+  #   source: "avfoundation://0"   # macOS (device index or name)
+  #   angle: "face-on"
   # - name: "dtl"
-  #   source: "rtsp://192.168.4.51:554/stream1"
+  #   source: "v4l2:///dev/video0" # Linux
   #   angle: "dtl"
 
 detection:
