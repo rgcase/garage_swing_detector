@@ -91,11 +91,6 @@ All tuning is in `server/config.yaml`. Key parameters:
 - `detection.roi` — optional region of interest as [x, y, w, h] normalized 0-1, set this to the hitting area to reduce false positives
 - `clips.pre_seconds` / `clips.post_seconds` — how much video to keep around the trigger point
 
-## Planned Features
+## Feature Roadmap
 
-- [ ] Auto-play latest swing in web UI (SSE live updates)
-- [ ] Swing comparison view (side-by-side two swings)
-- [ ] Gesture detection (thumbs up/down via MediaPipe) for quick swing rating
-- [ ] MediaPipe Pose estimation for swing phase detection and metrics
-- [ ] Export tagged swings as compilation video
-- [ ] Mobile-friendly PWA UI improvements
+See [FEATURES.md](FEATURES.md) for the full list of completed, planned, and idea-stage features.
