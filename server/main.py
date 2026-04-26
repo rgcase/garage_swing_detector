@@ -219,7 +219,10 @@ class SwingCamServer:
                 # We have events from two cameras — create a correlated swing
                 self._pending_events.remove(matched)
                 swing_id = self.db.generate_swing_id()
-                self.db.create_swing(swing_id, min(matched.trigger_time, event.trigger_time))
+                # Use the earliest trigger as the shared reference point
+                # so both clips cover the same time window and play in sync
+                shared_trigger = min(matched.trigger_time, event.trigger_time)
+                self.db.create_swing(swing_id, shared_trigger)
                 self.gesture_detector.start_watching(swing_id)
 
                 for evt in [matched, event]:
@@ -228,7 +231,7 @@ class SwingCamServer:
                     )
                     self.clip_saver.save_clip_async(
                         buffer=self.buffers[evt.camera_name],
-                        trigger_time=evt.trigger_time,
+                        trigger_time=shared_trigger,
                         camera_name=evt.camera_name,
                         swing_id=swing_id,
                         callback=lambda sid, cname, fp, angle=cam_cfg.get("angle", "unknown"):
