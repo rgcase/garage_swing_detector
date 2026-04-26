@@ -326,16 +326,26 @@ cmd_update() {
 }
 
 cmd_stream() {
-    local angle_arg="${1:-}"
-    local server_ip_arg="${2:-}"
-    local port_override="${3:-}"
+    # Parse --test flag; remaining args are positional.
+    local test_mode=0
+    local args=()
+    for arg in "$@"; do
+        case "$arg" in
+            --test) test_mode=1 ;;
+            *) args+=("$arg") ;;
+        esac
+    done
+
+    local angle_arg="${args[0]:-}"
+    local server_ip_arg="${args[1]:-}"
+    local port_override="${args[2]:-}"
 
     local angle port
     case "$angle_arg" in
         ff|front-facing)   angle="ff";  port=9556 ;;
         dtl|down-the-line) angle="dtl"; port=9557 ;;
         "")
-            _red "Usage: swingcam stream <ff|dtl> <server> [port]"
+            _red "Usage: swingcam stream [--test] <ff|dtl> <server> [port]"
             exit 1
             ;;
         *)
@@ -346,21 +356,6 @@ cmd_stream() {
 
     if [ -n "$port_override" ]; then
         port="$port_override"
-    fi
-
-    if ! command -v rpicam-vid &>/dev/null; then
-        if ! command -v apt-get &>/dev/null; then
-            _red "rpicam-vid not found — this command must run on a Raspberry Pi."
-            exit 1
-        fi
-        echo "rpicam-vid not found. Installing rpicam-apps..."
-        sudo apt-get update
-        sudo apt-get install -y rpicam-apps
-        if ! command -v rpicam-vid &>/dev/null; then
-            _red "Install completed but rpicam-vid still not found. Aborting."
-            exit 1
-        fi
-        _green "rpicam-apps installed."
     fi
 
     # Resolve server IP: arg > env > stored file > prompt
@@ -377,14 +372,40 @@ cmd_stream() {
     fi
 
     if [ -z "$server_ip" ]; then
-        mkdir -p "$APP_DIR"
-        read -rp "Server IP address: " server_ip
-        if [ -z "$server_ip" ]; then
-            _red "Server IP required."
+        if [ "$test_mode" = "1" ]; then
+            server_ip="localhost"
+        else
+            mkdir -p "$APP_DIR"
+            read -rp "Server IP address: " server_ip
+            if [ -z "$server_ip" ]; then
+                _red "Server IP required."
+                exit 1
+            fi
+            printf 'SWINGCAM_SERVER=%s\n' "$server_ip" > "$pi_env"
+            _green "Saved server IP to $pi_env"
+        fi
+    fi
+
+    # Test mode: skip rpicam-vid, run the Python synthetic stream instead
+    if [ "$test_mode" = "1" ]; then
+        _ensure_venv
+        echo "Test mode: synthetic stream (still → swing burst → still)"
+        exec "$VENV_DIR/bin/python" "$SERVER_DIR/test_stream.py" "$server_ip" "$port"
+    fi
+
+    if ! command -v rpicam-vid &>/dev/null; then
+        if ! command -v apt-get &>/dev/null; then
+            _red "rpicam-vid not found — this command must run on a Raspberry Pi."
             exit 1
         fi
-        printf 'SWINGCAM_SERVER=%s\n' "$server_ip" > "$pi_env"
-        _green "Saved server IP to $pi_env"
+        echo "rpicam-vid not found. Installing rpicam-apps..."
+        sudo apt-get update
+        sudo apt-get install -y rpicam-apps
+        if ! command -v rpicam-vid &>/dev/null; then
+            _red "Install completed but rpicam-vid still not found. Aborting."
+            exit 1
+        fi
+        _green "rpicam-apps installed."
     fi
 
     # Stream parameters — keep in sync with server stream config
@@ -434,13 +455,19 @@ Commands:
   config          Edit the config file (restarts server if running)
   update [SHA]    Pull latest main (or checkout a specific SHA) and restart
 
-Pi commands:
+Streaming commands:
   stream <ff|dtl> <server> [port]
                   Stream the Pi camera to the server. Angle selects port:
                     ff  → 9556 (front-facing)
                     dtl → 9557 (down-the-line)
-                  Server is a hostname or IP (e.g. "swingcam" or "192.168.4.234").
-                  Port defaults based on angle but can be overridden.
+                    Server is a hostname or IP (e.g. "swingcam" or "192.168.4.234").
+                    Port defaults based on angle but can be overridden.
+
+  stream --test <ff|dtl> [server] [port]
+                  Send a synthetic test stream that simulates a swing
+                  pattern (still → motion burst → still). Useful for
+                  verifying detection without a real camera.
+                  Server defaults to localhost.
 
 Data directory: $APP_DIR
   config.yaml     Server configuration
@@ -464,7 +491,7 @@ case "${1:-help}" in
     logs)    cmd_logs ;;
     config)  cmd_config ;;
     update)  cmd_update "${2:-main}" ;;
-    stream)  cmd_stream "${2:-}" "${3:-}" "${4:-}" ;;
+    stream)  shift; cmd_stream "$@" ;;
     help|--help|-h) cmd_help ;;
     *)
         _red "Unknown command: $1"
