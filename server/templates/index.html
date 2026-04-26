@@ -257,7 +257,8 @@
                     {% for clip in swing.clips %}
                     <div class="video-wrap">
                         <span class="video-label">{{ clip.angle or clip.camera_name }}</span>
-                        <video controls preload="metadata" muted playsinline>
+                        <video controls preload="metadata" muted playsinline
+                               {% if clip.trim_start is not none %}data-trim-start="{{ clip.trim_start }}" data-trim-end="{{ clip.trim_end }}"{% endif %}>
                             <source src="/clips/{{ clip.filepath }}" type="video/mp4">
                         </video>
                     </div>
@@ -272,7 +273,7 @@
                     <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
                     {% if swing.clips and swing.clips[0].trim_start is not none %}
                     <span style="margin-left:auto"></span>
-                    <button class="speed-btn" onclick="playTrimmed(this, {{ swing.clips[0].trim_start }}, {{ swing.clips[0].trim_end }})">Swing Only</button>
+                    <button class="speed-btn" onclick="toggleFullClip(this)">Full Clip</button>
                     {% endif %}
                 </div>
                 <div class="swing-actions">
@@ -305,20 +306,43 @@
     </div>
 
     <script>
-        function playTrimmed(btn, trimStart, trimEnd) {
-            const card = btn.closest('.swing-card');
-            const videos = card.querySelectorAll('video');
-            videos.forEach(v => {
-                v.currentTime = trimStart;
-                v.play();
-                const onTime = () => {
-                    if (v.currentTime >= trimEnd) {
-                        v.pause();
-                        v.removeEventListener('timeupdate', onTime);
-                    }
-                };
-                v.addEventListener('timeupdate', onTime);
+        // Auto-trim: videos default to playing only the detected swing window.
+        // The "Full Clip" toggle escapes those bounds.
+        function setupTrim(video) {
+            const ts = parseFloat(video.dataset.trimStart);
+            const te = parseFloat(video.dataset.trimEnd);
+            if (isNaN(ts) || isNaN(te)) return;
+
+            video.dataset.trimActive = 'true';
+
+            const seekToStart = () => {
+                if (video.currentTime < ts) video.currentTime = ts;
+            };
+            if (video.readyState >= 1) seekToStart();
+            else video.addEventListener('loadedmetadata', seekToStart, { once: true });
+
+            video.addEventListener('timeupdate', () => {
+                if (video.dataset.trimActive === 'true' && video.currentTime >= te) {
+                    video.pause();
+                    video.currentTime = te;
+                }
             });
+        }
+        document.querySelectorAll('video').forEach(setupTrim);
+
+        function toggleFullClip(btn) {
+            const card = btn.closest('.swing-card');
+            const videos = card.querySelectorAll('video[data-trim-start]');
+            if (!videos.length) return;
+            const goingFull = videos[0].dataset.trimActive === 'true';
+            videos.forEach(v => {
+                v.dataset.trimActive = goingFull ? 'false' : 'true';
+                if (!goingFull) {
+                    v.currentTime = parseFloat(v.dataset.trimStart);
+                }
+            });
+            btn.textContent = goingFull ? 'Swing Only' : 'Full Clip';
+            btn.classList.toggle('active', goingFull);
         }
 
         function setSpeed(btn, rate) {
