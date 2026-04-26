@@ -347,34 +347,17 @@
     </div>
 
     <script>
-        // Auto-trim: videos default to playing only the detected swing window.
-        // The "Full Clip" toggle escapes those bounds.
+        // Initial seek: each video jumps to its detected swing start on load.
+        // Pause/replay/scrub behavior lives in setupUnifiedPlayer below.
         function setupTrim(video) {
             const ts = parseFloat(video.dataset.trimStart);
-            const te = parseFloat(video.dataset.trimEnd);
-            if (isNaN(ts) || isNaN(te)) return;
-
+            if (isNaN(ts)) return;
             video.dataset.trimActive = 'true';
-
             const seekToStart = () => {
                 if (video.currentTime < ts) video.currentTime = ts;
             };
             if (video.readyState >= 1) seekToStart();
             else video.addEventListener('loadedmetadata', seekToStart, { once: true });
-
-            video.addEventListener('timeupdate', () => {
-                if (video.dataset.trimActive === 'true' && video.currentTime >= te) {
-                    video.pause();
-                    video.currentTime = te;
-                }
-            });
-
-            // If user hits play after we paused at the trim end, rewind to start.
-            video.addEventListener('play', () => {
-                if (video.dataset.trimActive === 'true' && video.currentTime >= te - 0.05) {
-                    video.currentTime = ts;
-                }
-            });
         }
         document.querySelectorAll('video').forEach(setupTrim);
 
@@ -454,9 +437,18 @@
                 const t = parseFloat(v.dataset.trimStart);
                 return isNaN(t) ? 0 : t;
             };
+            const endTime = (v) => {
+                const t = parseFloat(v.dataset.trimEnd);
+                return isNaN(t) ? Infinity : t;
+            };
             const primaryRef = refTime(primary);
-            const syncSecondaries = () => {
-                const offset = primary.currentTime - primaryRef;
+            const primaryEnd = endTime(primary);
+
+            // Sync secondaries by swing offset. Use the explicit primaryTime
+            // arg rather than primary.currentTime since reading right after a
+            // .currentTime= can race with the seek pipeline.
+            const syncSecondariesTo = (primaryTime) => {
+                const offset = primaryTime - primaryRef;
                 for (const v of secondaries) {
                     const target = refTime(v) + offset;
                     if (Math.abs(v.currentTime - target) > 0.08) {
@@ -468,12 +460,23 @@
             const playAll = () => videos.forEach(v => { if (v.paused) v.play(); });
             const pauseAll = () => videos.forEach(v => { if (!v.paused) v.pause(); });
 
+            // Tracks whether playback paused naturally at the trim end. Cleared
+            // by any user scrub so we don't fight scrubbing past the swing window.
+            let endedAtTrim = false;
+
             playBtn.addEventListener('click', () => {
-                if (primary.paused) playAll(); else pauseAll();
+                if (primary.paused) {
+                    if (endedAtTrim) {
+                        primary.currentTime = primaryRef;
+                        syncSecondariesTo(primaryRef);
+                        endedAtTrim = false;
+                    }
+                    playAll();
+                } else {
+                    pauseAll();
+                }
             });
-            videos.forEach(v => v.addEventListener('click', () => {
-                if (primary.paused) playAll(); else pauseAll();
-            }));
+            videos.forEach(v => v.addEventListener('click', () => playBtn.click()));
 
             primary.addEventListener('play', () => {
                 playBtn.textContent = '⏸';
@@ -486,7 +489,15 @@
 
             let scrubbing = false;
             primary.addEventListener('timeupdate', () => {
-                syncSecondaries();
+                // Auto-pause at trim end during natural playback only — no snap-back,
+                // so user can scrub past the trim window freely.
+                if (!primary.paused
+                    && primary.dataset.trimActive === 'true'
+                    && primary.currentTime >= primaryEnd) {
+                    pauseAll();
+                    endedAtTrim = true;
+                }
+                if (!primary.paused) syncSecondariesTo(primary.currentTime);
                 if (scrubbing || !primary.duration) return;
                 scrubber.value = (primary.currentTime / primary.duration) * 100;
                 timeCur.textContent = fmt(primary.currentTime);
@@ -498,9 +509,10 @@
 
             scrubber.addEventListener('input', () => {
                 scrubbing = true;
+                endedAtTrim = false;
                 const t = (parseFloat(scrubber.value) / 100) * (primary.duration || 0);
                 primary.currentTime = t;
-                syncSecondaries();
+                syncSecondariesTo(t);
                 timeCur.textContent = fmt(t);
                 scrubbing = false;
             });
