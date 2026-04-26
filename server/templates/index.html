@@ -327,6 +327,13 @@
                     video.currentTime = te;
                 }
             });
+
+            // If user hits play after we paused at the trim end, rewind to start.
+            video.addEventListener('play', () => {
+                if (video.dataset.trimActive === 'true' && video.currentTime >= te - 0.05) {
+                    video.currentTime = ts;
+                }
+            });
         }
         document.querySelectorAll('video').forEach(setupTrim);
 
