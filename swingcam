@@ -453,6 +453,7 @@ cmd_stream() {
             --flush \
             --intra "$INTRA_FRAMES" \
             --gain "$MAX_GAIN" \
+            --denoise cdn_hq \
             -o "tcp://${server_ip}:${port}" || true
 
         echo "Stream ended. Retrying in 5s..."

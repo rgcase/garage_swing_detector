@@ -86,8 +86,8 @@ class ClipSaver:
             "-r", str(self.fps),
             "-i", "-",
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
+            "-preset", "slow",
+            "-crf", "19",
             "-pix_fmt", "yuv420p",
             # Dense keyframes (~1 per second at 30fps) so the web UI can
             # scrub frame-accurately. Default GOP of 250 leaves ~one keyframe
