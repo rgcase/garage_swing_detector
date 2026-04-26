@@ -6,6 +6,8 @@ import asyncio
 import io
 import json
 import logging
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -188,6 +190,77 @@ def create_app(
             raise HTTPException(404, "Swing not found")
         db.update_notes(swing_id, req.notes)
         return {"ok": True, "swing_id": swing_id}
+
+    @app.get("/api/swings/{swing_id}/export")
+    async def api_export_swing(swing_id: str):
+        """Export a swing as a single side-by-side MP4 (or single clip if only one camera)."""
+        swing = db.get_swing(swing_id)
+        if not swing:
+            raise HTTPException(404, "Swing not found")
+        if not swing.clips:
+            raise HTTPException(404, "No clips for this swing")
+
+        clips_path = Path(clips_dir)
+
+        if len(swing.clips) == 1:
+            # Single camera — just serve the file
+            clip_file = clips_path / swing.clips[0]["filepath"]
+            if not clip_file.exists():
+                raise HTTPException(404, "Clip file not found")
+            return FileResponse(
+                clip_file,
+                media_type="video/mp4",
+                filename=f"swing_{swing_id}.mp4",
+            )
+
+        # Multiple cameras — stitch side-by-side with FFmpeg
+        input_files = []
+        for clip in swing.clips:
+            p = clips_path / clip["filepath"]
+            if not p.exists():
+                raise HTTPException(404, f"Clip file not found: {clip['filepath']}")
+            input_files.append(str(p))
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        # FFmpeg hstack filter: place videos side-by-side
+        inputs = []
+        for f in input_files:
+            inputs.extend(["-i", f])
+
+        # Scale all inputs to the same height, then hstack
+        n = len(input_files)
+        filter_parts = []
+        for i in range(n):
+            filter_parts.append(f"[{i}:v]scale=-2:720[v{i}]")
+        stack_inputs = "".join(f"[v{i}]" for i in range(n))
+        filter_parts.append(f"{stack_inputs}hstack=inputs={n}[out]")
+        filter_str = ";".join(filter_parts)
+
+        cmd = [
+            "ffmpeg", "-y",
+            *inputs,
+            "-filter_complex", filter_str,
+            "-map", "[out]",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            tmp_path,
+        ]
+
+        proc = subprocess.run(cmd, capture_output=True)
+        if proc.returncode != 0:
+            logger.error(f"Export FFmpeg failed: {proc.stderr.decode(errors='replace')}")
+            raise HTTPException(500, "Failed to generate export")
+
+        return FileResponse(
+            tmp_path,
+            media_type="video/mp4",
+            filename=f"swing_{swing_id}_combined.mp4",
+        )
 
     @app.delete("/api/swings/{swing_id}")
     async def api_delete_swing(swing_id: str):

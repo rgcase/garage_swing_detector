@@ -239,6 +239,7 @@
                            value="{{ swing.notes or '' }}"
                            onchange="updateNotes('{{ swing.id }}', this.value)">
                     <button class="analysis-toggle" onclick="toggleAnalysis('{{ swing.id }}')">Analysis ▾</button>
+                    <a class="tag-btn" href="/api/swings/{{ swing.id }}/export" download style="text-decoration:none">Export</a>
                     <button class="tag-btn delete" onclick="deleteSwing('{{ swing.id }}')">🗑</button>
                 </div>
                 <div class="analysis-panel" id="analysis-{{ swing.id }}">
