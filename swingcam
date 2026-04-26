@@ -311,8 +311,18 @@ cmd_stream() {
     esac
 
     if ! command -v rpicam-vid &>/dev/null; then
-        _red "rpicam-vid not found — this command must run on a Raspberry Pi."
-        exit 1
+        if ! command -v apt-get &>/dev/null; then
+            _red "rpicam-vid not found — this command must run on a Raspberry Pi."
+            exit 1
+        fi
+        echo "rpicam-vid not found. Installing rpicam-apps..."
+        sudo apt-get update
+        sudo apt-get install -y rpicam-apps
+        if ! command -v rpicam-vid &>/dev/null; then
+            _red "Install completed but rpicam-vid still not found. Aborting."
+            exit 1
+        fi
+        _green "rpicam-apps installed."
     fi
 
     # Resolve server IP: arg > env > stored file > prompt
