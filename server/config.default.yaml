@@ -18,11 +18,10 @@ cameras:
     port: 9556               # Port the Pi streams to (matches `swingcam stream ff`)
     angle: "face-on"         # face-on | dtl (down-the-line)
 
-  # Uncomment when you add a second camera:
-  # - name: "dtl"
-  #   host: "0.0.0.0"
-  #   port: 9557             # matches `swingcam stream dtl`
-  #   angle: "dtl"
+  - name: "dtl"
+    host: "0.0.0.0"
+    port: 9557               # matches `swingcam stream dtl`
+    angle: "dtl"
 
 detection:
   # Motion detection via frame differencing
