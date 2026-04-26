@@ -9,6 +9,7 @@ import logging
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -90,16 +91,52 @@ def create_app(
 
     # ── Pages ──
 
+    def _group_into_sessions(swings, gap_minutes=30):
+        """Group swings into practice sessions based on time gaps."""
+        if not swings:
+            return []
+
+        sessions = []
+        current_session = {"swings": [swings[0]]}
+
+        for swing in swings[1:]:
+            try:
+                prev_ts = datetime.fromisoformat(current_session["swings"][-1].timestamp)
+                curr_ts = datetime.fromisoformat(swing.timestamp)
+                gap = abs((prev_ts - curr_ts).total_seconds())
+            except (ValueError, AttributeError):
+                gap = 0
+
+            if gap > gap_minutes * 60:
+                sessions.append(current_session)
+                current_session = {"swings": [swing]}
+            else:
+                current_session["swings"].append(swing)
+
+        sessions.append(current_session)
+
+        # Add session summaries
+        for session in sessions:
+            s = session["swings"]
+            session["start"] = s[-1].timestamp  # oldest (swings are desc)
+            session["end"] = s[0].timestamp
+            session["count"] = len(s)
+            session["good"] = sum(1 for sw in s if sw.tag == "good")
+            session["bad"] = sum(1 for sw in s if sw.tag == "bad")
+
+        return sessions
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request, tag: str | None = None):
-        swings = db.list_swings(limit=100, tag_filter=tag)
+        swings = db.list_swings(limit=200, tag_filter=tag)
         stats = db.get_stats()
         cameras = _camera_status(_receivers, _buffers)
+        sessions = _group_into_sessions(swings)
         return templates.TemplateResponse(
             "index.html",
             {
                 "request": request,
-                "swings": swings,
+                "sessions": sessions,
                 "stats": stats,
                 "active_filter": tag,
                 "cameras": cameras,
