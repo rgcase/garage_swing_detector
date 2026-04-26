@@ -21,13 +21,16 @@ FPS = 30
 
 CYCLE_SECONDS = 10.0    # full cycle (still + burst + still)
 BURST_START = 8.0       # when in the cycle the burst begins
-BURST_DURATION = 0.7    # length of the motion burst (seconds)
+BURST_DURATION = 0.9    # length of the motion burst (seconds)
 
-# Object that sweeps across the frame during the burst.
-# Sized so it fills ~6% of the frame, which lands in the optical-flow
-# detector's "concentrated motion" sweet spot (5-40%).
+# Object sweeps across most of the frame during the burst.
+# Speed is tuned so the object moves slowly enough (~30 px/frame at full
+# resolution, ~7 px/frame at the detector's 1/4-scale analysis) for
+# Farneback optical flow to track it. Faster motion than ~15 px/frame at
+# analysis scale produces no flow signal and the spike gets rejected.
 OBJECT_W = 240
 OBJECT_H = 460
+SWEEP_DISTANCE = 800    # pixels the object travels horizontally
 
 
 def make_frame(t: float) -> np.ndarray:
@@ -47,10 +50,10 @@ def make_frame(t: float) -> np.ndarray:
 
     if in_burst:
         progress = (cycle_pos - BURST_START) / BURST_DURATION  # 0..1
-        # Sweep horizontally; object enters from off-frame on the left
-        # and exits off-frame on the right.
-        total_x = WIDTH + OBJECT_W * 2
-        cx = int(progress * total_x - OBJECT_W)
+        # Sweep horizontally within the visible frame so the object
+        # stays on screen the whole time (no abrupt entries/exits).
+        x_start = (WIDTH - SWEEP_DISTANCE) // 2
+        cx = int(x_start + progress * SWEEP_DISTANCE)
         cy = HEIGHT // 2 - 30
 
         # Bright object body — high contrast against the background
@@ -60,7 +63,7 @@ def make_frame(t: float) -> np.ndarray:
             (cx + OBJECT_W // 2, cy + OBJECT_H // 2),
             (240, 240, 240), -1,
         )
-        # A second offset object to add more total motion area
+        # A second offset object adds more total motion area
         cv2.rectangle(
             frame,
             (cx - OBJECT_W // 2 - 80, cy - OBJECT_H // 2 - 60),
