@@ -408,6 +408,22 @@ cmd_stream() {
         _green "rpicam-apps installed."
     fi
 
+    # rpicam-vid won't accept hostnames in tcp://… URLs, only literal IPs.
+    # Resolve via NSS (mDNS-enabled on Pi OS) before passing it through.
+    if [[ ! "$server_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        local resolved
+        resolved=$(getent ahosts "$server_ip" 2>/dev/null | awk '/STREAM/ {print $1; exit}')
+        if [ -z "$resolved" ]; then
+            resolved=$(getent hosts "$server_ip" 2>/dev/null | awk '{print $1; exit}')
+        fi
+        if [ -z "$resolved" ]; then
+            _red "Could not resolve '$server_ip'. Pass an IP address directly, or check your DNS/mDNS setup."
+            exit 1
+        fi
+        echo "  Resolved ${server_ip} → ${resolved}"
+        server_ip="$resolved"
+    fi
+
     # Stream parameters — keep in sync with server stream config
     local WIDTH=1280
     local HEIGHT=720
