@@ -83,6 +83,20 @@
             .filters { padding: 0.75rem; }
         }
 
+        .speed-bar {
+            padding: 0.4rem 1.2rem;
+            display: flex; gap: 0.3rem; align-items: center;
+            border-top: 1px solid #1a1a1a;
+        }
+        .speed-bar .label { font-size: 0.7rem; color: #555; margin-right: 0.3rem; }
+        .speed-btn {
+            padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid #282828;
+            background: transparent; color: #666; cursor: pointer;
+            font-size: 0.75rem; font-family: monospace;
+        }
+        .speed-btn:hover { border-color: #444; color: #aaa; }
+        .speed-btn.active { border-color: #4ade80; color: #4ade80; }
+
         .swing-actions {
             padding: 0.8rem 1.2rem;
             display: flex; gap: 0.5rem; align-items: center;
@@ -229,6 +243,14 @@
                     </div>
                     {% endfor %}
                 </div>
+                <div class="speed-bar">
+                    <span class="label">Speed</span>
+                    <button class="speed-btn" onclick="setSpeed(this, 0.1)">0.1x</button>
+                    <button class="speed-btn" onclick="setSpeed(this, 0.25)">0.25x</button>
+                    <button class="speed-btn" onclick="setSpeed(this, 0.5)">0.5x</button>
+                    <button class="speed-btn active" onclick="setSpeed(this, 1)">1x</button>
+                    <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
+                </div>
                 <div class="swing-actions">
                     <button class="tag-btn good {{ 'active' if swing.tag == 'good' else '' }}"
                             onclick="tagSwing('{{ swing.id }}', 'good')">👍 Good</button>
@@ -258,6 +280,13 @@
     </div>
 
     <script>
+        function setSpeed(btn, rate) {
+            const card = btn.closest('.swing-card');
+            card.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            card.querySelectorAll('video').forEach(v => { v.playbackRate = rate; });
+        }
+
         async function tagSwing(id, tag) {
             const res = await fetch(`/api/swings/${id}/tag`, {
                 method: 'POST',
