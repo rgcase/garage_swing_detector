@@ -137,6 +137,7 @@ class SwingDetector:
         Returns 0.0-1.0 score.
         """
         if self._peak_pair is None:
+            logger.info(f"[{self.camera_name}] flow score=0: no peak_pair captured")
             return 0.0
 
         prev_full, curr_full = self._peak_pair
@@ -146,6 +147,7 @@ class SwingDetector:
         roi_prev = prev_full[y1:y2, x1:x2]
 
         if roi_curr.size == 0 or roi_prev.size == 0:
+            logger.info(f"[{self.camera_name}] flow score=0: empty ROI")
             return 0.0
 
         # Compute dense optical flow (Farneback)
@@ -163,6 +165,11 @@ class SwingDetector:
         # 1. Speed check: is the fast part fast enough?
         # Look at the top 10% of flow magnitudes
         top_10_pct = np.percentile(mag, 90)
+        max_mag = float(np.max(mag))
+        logger.info(
+            f"[{self.camera_name}] flow stats: top_10_pct={top_10_pct:.2f} "
+            f"max={max_mag:.2f} min_required={self.FLOW_SPEED_MIN}"
+        )
         if top_10_pct < self.FLOW_SPEED_MIN:
             return 0.0
 
