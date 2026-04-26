@@ -162,31 +162,37 @@ class SwingDetector:
         # Flow magnitude
         mag = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
 
-        # 1. Speed check: is the fast part fast enough?
-        # Look at the top 10% of flow magnitudes
-        top_10_pct = np.percentile(mag, 90)
+        # 1. Speed check: is there fast motion *somewhere* in the frame?
+        # We use the 99th percentile rather than the 90th: a swing's motion
+        # is concentrated in a small region (the club + arms, often <10% of
+        # the frame), so the 90th percentile of the whole ROI is dominated
+        # by the still background and reads 0 even when the swing is fast.
+        peak_mag = float(np.percentile(mag, 99))
         max_mag = float(np.max(mag))
         logger.info(
-            f"[{self.camera_name}] flow stats: top_10_pct={top_10_pct:.2f} "
+            f"[{self.camera_name}] flow stats: peak(p99)={peak_mag:.2f} "
             f"max={max_mag:.2f} min_required={self.FLOW_SPEED_MIN}"
         )
-        if top_10_pct < self.FLOW_SPEED_MIN:
+        if peak_mag < self.FLOW_SPEED_MIN:
             return 0.0
 
-        speed_score = min(1.0, top_10_pct / (self.FLOW_SPEED_MIN * 4))
+        speed_score = min(1.0, peak_mag / (self.FLOW_SPEED_MIN * 4))
 
         # 2. Concentration check: is motion concentrated or diffuse?
-        # A swing has high flow in a small area; walking has low flow everywhere
-        threshold_mag = top_10_pct * 0.5
+        # A swing has high flow in a small area; walking has low flow everywhere.
+        # Threshold is half of peak so we capture the moving region without
+        # noise from the static background.
+        threshold_mag = peak_mag * 0.5
         active_pixels = np.count_nonzero(mag > threshold_mag)
         total_pixels = mag.size
         active_fraction = active_pixels / total_pixels
 
-        # Sweet spot: 5-40% of pixels are active (concentrated but not too sparse)
-        if active_fraction < 0.02 or active_fraction > 0.6:
+        # Sweet spot: 1-40% of pixels are active (concentrated but not too sparse).
+        # Lowered the lower bound — a swing can occupy as little as 1-2% of the frame.
+        if active_fraction < 0.005 or active_fraction > 0.6:
             concentration_score = 0.2
-        elif active_fraction < 0.05:
-            concentration_score = 0.5
+        elif active_fraction < 0.02:
+            concentration_score = 0.7
         elif active_fraction <= 0.4:
             concentration_score = 1.0
         else:
