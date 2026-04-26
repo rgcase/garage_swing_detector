@@ -314,7 +314,9 @@
                     <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
                     {% if swing.clips and swing.clips[0].trim_start is not none %}
                     <span style="margin-left:auto"></span>
-                    <button class="speed-btn" onclick="toggleFullClip(this)">Full Clip</button>
+                    <span class="label">View</span>
+                    <button class="speed-btn trim-btn active" onclick="setTrimMode(this, true)">Swing</button>
+                    <button class="speed-btn trim-btn" onclick="setTrimMode(this, false)">Full</button>
                     {% endif %}
                 </div>
                 <div class="swing-actions">
@@ -361,19 +363,16 @@
         }
         document.querySelectorAll('video').forEach(setupTrim);
 
-        function toggleFullClip(btn) {
+        function setTrimMode(btn, trim) {
             const card = btn.closest('.swing-card');
             const videos = card.querySelectorAll('video[data-trim-start]');
             if (!videos.length) return;
-            const goingFull = videos[0].dataset.trimActive === 'true';
             videos.forEach(v => {
-                v.dataset.trimActive = goingFull ? 'false' : 'true';
-                if (!goingFull) {
-                    v.currentTime = parseFloat(v.dataset.trimStart);
-                }
+                v.dataset.trimActive = trim ? 'true' : 'false';
+                if (trim) v.currentTime = parseFloat(v.dataset.trimStart);
             });
-            btn.textContent = goingFull ? 'Swing Only' : 'Full Clip';
-            btn.classList.toggle('active', goingFull);
+            card.querySelectorAll('.trim-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
         }
 
         function setSpeed(btn, rate) {
