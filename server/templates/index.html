@@ -430,10 +430,14 @@
         }
 
         // Unified player: one play/scrub control drives all clips in a swing card.
+        // Secondaries are aligned to the primary by *swing offset* (currentTime
+        // minus the clip's own trim_start) so the same swing moment shows up
+        // in every angle even when per-camera triggers landed at different times.
         function setupUnifiedPlayer(card) {
             const videos = [...card.querySelectorAll('video')];
             if (!videos.length) return;
             const primary = videos[0];
+            const secondaries = videos.slice(1);
             const playBtn = card.querySelector('.play-btn');
             const scrubber = card.querySelector('.scrubber');
             const timeCur = card.querySelector('.time-current');
@@ -446,8 +450,23 @@
                 return `${m}:${ss}`;
             };
 
-            const playAll = () => videos.forEach(v => v.play());
-            const pauseAll = () => videos.forEach(v => v.pause());
+            const refTime = (v) => {
+                const t = parseFloat(v.dataset.trimStart);
+                return isNaN(t) ? 0 : t;
+            };
+            const primaryRef = refTime(primary);
+            const syncSecondaries = () => {
+                const offset = primary.currentTime - primaryRef;
+                for (const v of secondaries) {
+                    const target = refTime(v) + offset;
+                    if (Math.abs(v.currentTime - target) > 0.08) {
+                        v.currentTime = target;
+                    }
+                }
+            };
+
+            const playAll = () => videos.forEach(v => { if (v.paused) v.play(); });
+            const pauseAll = () => videos.forEach(v => { if (!v.paused) v.pause(); });
 
             playBtn.addEventListener('click', () => {
                 if (primary.paused) playAll(); else pauseAll();
@@ -456,11 +475,18 @@
                 if (primary.paused) playAll(); else pauseAll();
             }));
 
-            primary.addEventListener('play', () => { playBtn.textContent = '⏸'; });
-            primary.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+            primary.addEventListener('play', () => {
+                playBtn.textContent = '⏸';
+                for (const v of secondaries) { if (v.paused) v.play(); }
+            });
+            primary.addEventListener('pause', () => {
+                playBtn.textContent = '▶';
+                for (const v of secondaries) { if (!v.paused) v.pause(); }
+            });
 
             let scrubbing = false;
             primary.addEventListener('timeupdate', () => {
+                syncSecondaries();
                 if (scrubbing || !primary.duration) return;
                 scrubber.value = (primary.currentTime / primary.duration) * 100;
                 timeCur.textContent = fmt(primary.currentTime);
@@ -473,7 +499,8 @@
             scrubber.addEventListener('input', () => {
                 scrubbing = true;
                 const t = (parseFloat(scrubber.value) / 100) * (primary.duration || 0);
-                videos.forEach(v => v.currentTime = t);
+                primary.currentTime = t;
+                syncSecondaries();
                 timeCur.textContent = fmt(t);
                 scrubbing = false;
             });
