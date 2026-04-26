@@ -22,17 +22,13 @@
 - [x] Clip storage limit (auto-delete oldest)
 - [x] Daemon management CLI (swingcam start/stop/restart/update/config)
 - [x] Configurable stream settings (resolution, fps)
+- [x] Slow-motion playback (0.1x to 2x speed controls)
+- [x] Practice sessions (group swings by time, session headers with stats)
+- [x] Auto-trim ("Swing Only" button seeks to detected swing bounds)
+- [x] Side-by-side video export
+- [x] RTSP and USB camera support
 
 ## Up Next
-
-### Slow-motion playback
-Playback rate control (0.25x, 0.5x, 1x, 2x) on the video player. Golf swings happen in ~0.3s so slow-mo is essential for actually reviewing mechanics.
-
-### Practice sessions
-Group swings within 30 minutes of each other into sessions. Show session summary: date, duration, swing count, good/bad breakdown. Makes it easy to review a whole practice.
-
-### Auto-trim clips
-Use detection timestamps to trim clips to just the swing itself (~2-3s) instead of the full 9s window. Saves storage and speeds up review. Keep the full clip available as an option.
 
 ## Planned
 
