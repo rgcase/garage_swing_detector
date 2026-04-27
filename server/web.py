@@ -447,6 +447,9 @@ def create_app(
         swing = db.get_swing(swing_id)
         if not swing:
             return
+        # Render the same partial used in the index loop so the inserted card
+        # is byte-identical to a normal page render — no JS-side duplication.
+        html = templates.get_template("_swing_card.html").render(swing=swing)
         event = {
             "type": "new_swing",
             "swing": {
@@ -455,6 +458,7 @@ def create_app(
                 "tag": swing.tag,
                 "clips": swing.clips,
             },
+            "html": html,
         }
         for q in list(_sse_subscribers):
             try:

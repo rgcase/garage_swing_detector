@@ -1,0 +1,55 @@
+<div class="swing-card" data-swing-id="{{ swing.id }}">
+    <div class="swing-header">
+        <span class="swing-time" data-ts="{{ swing.timestamp }}">{{ swing.timestamp }}</span>
+        <span class="swing-id">#{{ swing.id[:8] }}</span>
+    </div>
+    <div class="swing-videos">
+        {% for clip in swing.clips %}
+        <div class="video-wrap">
+            <span class="video-label">{{ clip.angle or clip.camera_name }}</span>
+            <video preload="metadata" muted playsinline
+                   {% if clip.trim_start is not none %}data-trim-start="{{ clip.trim_start }}" data-trim-end="{{ clip.trim_end }}"{% endif %}>
+                <source src="/clips/{{ clip.filepath }}" type="video/mp4">
+            </video>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="player-bar">
+        <button class="play-btn" aria-label="Play/pause">▶</button>
+        <span class="player-time time-current">0:00</span>
+        <input type="range" class="scrubber" min="0" max="100" value="0" step="0.01" aria-label="Seek">
+        <span class="player-time time-duration">0:00</span>
+    </div>
+    <div class="speed-bar">
+        <span class="label">Speed</span>
+        <button class="speed-btn" onclick="setSpeed(this, 0.1)">0.1x</button>
+        <button class="speed-btn" onclick="setSpeed(this, 0.25)">0.25x</button>
+        <button class="speed-btn" onclick="setSpeed(this, 0.5)">0.5x</button>
+        <button class="speed-btn active" onclick="setSpeed(this, 1)">1x</button>
+        <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
+        {% if swing.clips and swing.clips[0].trim_start is not none %}
+        <span style="margin-left:auto"></span>
+        <span class="label">View</span>
+        <button class="speed-btn trim-btn active" onclick="setTrimMode(this, true)">Swing</button>
+        <button class="speed-btn trim-btn" onclick="setTrimMode(this, false)">Full</button>
+        {% endif %}
+    </div>
+    <div class="swing-actions">
+        <button class="tag-btn good {{ 'active' if swing.tag == 'good' else '' }}"
+                onclick="tagSwing('{{ swing.id }}', 'good')">👍 Good</button>
+        <button class="tag-btn bad {{ 'active' if swing.tag == 'bad' else '' }}"
+                onclick="tagSwing('{{ swing.id }}', 'bad')">👎 Bad</button>
+        <input class="notes-input"
+               placeholder="Notes..."
+               value="{{ swing.notes or '' }}"
+               onchange="updateNotes('{{ swing.id }}', this.value)">
+        <button class="analysis-toggle" onclick="toggleAnalysis('{{ swing.id }}')">Analysis ▾</button>
+        <a class="tag-btn" href="/api/swings/{{ swing.id }}/export" download style="text-decoration:none">Export</a>
+        <button class="tag-btn delete" onclick="deleteSwing('{{ swing.id }}')">🗑</button>
+    </div>
+    <div class="analysis-panel" id="analysis-{{ swing.id }}">
+        <div class="metrics-grid" id="metrics-{{ swing.id }}">
+            <span style="color:#555">Loading analysis...</span>
+        </div>
+    </div>
+</div>
