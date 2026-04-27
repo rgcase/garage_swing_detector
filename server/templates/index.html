@@ -315,7 +315,7 @@
             if (!videos.length) return;
             videos.forEach(v => {
                 v.dataset.trimActive = trim ? 'true' : 'false';
-                if (trim) v.currentTime = parseFloat(v.dataset.trimStart);
+                v.currentTime = trim ? parseFloat(v.dataset.trimStart) : 0;
             });
             card.querySelectorAll('.trim-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -431,6 +431,11 @@
                 playBtn.textContent = '▶';
                 for (const v of secondaries) { if (!v.paused) v.pause(); }
             });
+
+            // Any explicit seek (scrubber, trim toggle, ...) clears the
+            // "ended at trim end" flag so the play handler doesn't snap
+            // playback back to trim_start after the user moved elsewhere.
+            primary.addEventListener('seeked', () => { endedAtTrim = false; });
 
             let scrubbing = false;
             primary.addEventListener('timeupdate', () => {
