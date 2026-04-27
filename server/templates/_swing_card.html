@@ -42,13 +42,16 @@
                 onclick="tagSwing('{{ swing.id }}', 'good')">👍 Good</button>
         <button class="tag-btn bad {{ 'active' if swing.tag == 'bad' else '' }}"
                 onclick="tagSwing('{{ swing.id }}', 'bad')">👎 Bad</button>
-        <input class="notes-input"
-               placeholder="Notes..."
-               value="{{ swing.notes or '' }}"
-               onchange="updateNotes('{{ swing.id }}', this.value)">
+        <button class="analysis-toggle notes-toggle" onclick="toggleNotes('{{ swing.id }}')">Notes{% if swing.notes %} •{% endif %} ▾</button>
         <button class="analysis-toggle" onclick="toggleAnalysis('{{ swing.id }}')">Analysis ▾</button>
         <a class="tag-btn" href="/api/swings/{{ swing.id }}/export" download style="text-decoration:none">Export</a>
         <button class="tag-btn delete" onclick="deleteSwing('{{ swing.id }}')">🗑</button>
+    </div>
+    <div class="notes-panel" id="notes-{{ swing.id }}">
+        <textarea class="notes-textarea"
+                  placeholder="Notes about this swing..."
+                  rows="3"
+                  onchange="updateNotes('{{ swing.id }}', this.value)">{{ swing.notes or '' }}</textarea>
     </div>
     <div class="analysis-panel" id="analysis-{{ swing.id }}">
         <div class="metrics-grid" id="metrics-{{ swing.id }}">

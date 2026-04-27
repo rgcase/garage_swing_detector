@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class TagRequest(BaseModel):
-    tag: str  # "good", "bad", or "neutral"
+    tag: str | None  # "good", "bad", or null to clear
 
 
 class NotesRequest(BaseModel):

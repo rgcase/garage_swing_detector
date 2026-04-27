@@ -111,7 +111,7 @@ class SwingDB:
         )
         self._conn.commit()
 
-    def tag_swing(self, swing_id: str, tag: str):
+    def tag_swing(self, swing_id: str, tag: str | None):
         self._conn.execute(
             "UPDATE swings SET tag = ? WHERE id = ?", (tag, swing_id)
         )
