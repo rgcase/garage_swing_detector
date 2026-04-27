@@ -81,6 +81,8 @@
             .notes-input { margin-left: 0; margin-top: 0.5rem; width: 100%; }
             .swing-list { padding: 0.75rem; }
             .filters { padding: 0.75rem; }
+            .speed-bar { padding: 0.4rem 0.7rem; }
+            .speed-bar .view-group { margin-left: 0; }
         }
 
         .player-bar {
@@ -120,9 +122,13 @@
 
         .speed-bar {
             padding: 0.4rem 1.2rem;
-            display: flex; gap: 0.3rem; align-items: center;
+            display: flex; gap: 0.3rem 0.8rem; align-items: center; flex-wrap: wrap;
             border-top: 1px solid #1a1a1a;
         }
+        .speed-bar .btn-group {
+            display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap;
+        }
+        .speed-bar .view-group { margin-left: auto; }
         .speed-bar .label { font-size: 0.7rem; color: #555; margin-right: 0.3rem; }
         .speed-btn {
             padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid #282828;

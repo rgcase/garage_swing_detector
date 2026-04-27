@@ -21,17 +21,20 @@
         <span class="player-time time-duration">0:00</span>
     </div>
     <div class="speed-bar">
-        <span class="label">Speed</span>
-        <button class="speed-btn" onclick="setSpeed(this, 0.1)">0.1x</button>
-        <button class="speed-btn" onclick="setSpeed(this, 0.25)">0.25x</button>
-        <button class="speed-btn" onclick="setSpeed(this, 0.5)">0.5x</button>
-        <button class="speed-btn active" onclick="setSpeed(this, 1)">1x</button>
-        <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
+        <div class="btn-group">
+            <span class="label">Speed</span>
+            <button class="speed-btn" onclick="setSpeed(this, 0.1)">0.1x</button>
+            <button class="speed-btn" onclick="setSpeed(this, 0.25)">0.25x</button>
+            <button class="speed-btn" onclick="setSpeed(this, 0.5)">0.5x</button>
+            <button class="speed-btn active" onclick="setSpeed(this, 1)">1x</button>
+            <button class="speed-btn" onclick="setSpeed(this, 2)">2x</button>
+        </div>
         {% if swing.clips and swing.clips[0].trim_start is not none %}
-        <span style="margin-left:auto"></span>
-        <span class="label">View</span>
-        <button class="speed-btn trim-btn active" onclick="setTrimMode(this, true)">Swing</button>
-        <button class="speed-btn trim-btn" onclick="setTrimMode(this, false)">Full</button>
+        <div class="btn-group view-group">
+            <span class="label">View</span>
+            <button class="speed-btn trim-btn active" onclick="setTrimMode(this, true)">Swing</button>
+            <button class="speed-btn trim-btn" onclick="setTrimMode(this, false)">Full</button>
+        </div>
         {% endif %}
     </div>
     <div class="swing-actions">
