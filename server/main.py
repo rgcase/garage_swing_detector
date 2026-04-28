@@ -40,6 +40,13 @@ def _setup_logging(log_cfg: dict | None = None):
 
     root = logging.getLogger()
     root.setLevel(level)
+    # Replace any existing handlers (notably the basicConfig bootstrap stream
+    # handler installed below at import time). Otherwise stderr ends up with
+    # one handler from basicConfig plus one from here, doubling every line in
+    # the captured .err file.
+    for h in list(root.handlers):
+        root.removeHandler(h)
+        h.close()
     formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATEFMT)
 
     # Always log to console
