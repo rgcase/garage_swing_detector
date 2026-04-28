@@ -414,6 +414,13 @@ class SwingCamServer:
                 f"Stream target [{cam['name']}/{cam['angle']}]: "
                 f"tcp://{host}:{cam['port']}"
             )
+        if self.audio_receiver is not None:
+            host = self.audio_receiver.host
+            if host in ("0.0.0.0", "::"):
+                host = lan_ip
+            logger.info(
+                f"Stream target [audio]: tcp://{host}:{self.audio_receiver.port}"
+            )
 
     def run(self):
         """Start everything."""

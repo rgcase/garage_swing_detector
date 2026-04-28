@@ -85,6 +85,14 @@ for cam in cfg.get("cameras", []):
     angle = cam.get("angle", "")
     suffix = f" ({angle})" if angle and angle != name else ""
     print(f"  Stream:  {name}{suffix}  →  tcp://{host}:{cam['port']}")
+
+audio = cfg.get("audio") or {}
+if audio.get("enabled", True):
+    host = audio.get("host", "0.0.0.0")
+    if host in ("0.0.0.0", "::"):
+        host = lan_ip
+    port = audio.get("port", 9558)
+    print(f"  Audio:   any Pi w/ USB mic  →  tcp://{host}:{port}")
 PY
 }
 
