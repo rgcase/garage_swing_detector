@@ -17,6 +17,8 @@ class SwingRecord:
     tag: str | None         # "good", "bad", or None (untagged)
     notes: str | None
     clips: list[dict]       # [{camera_name, angle, filepath}]
+    impact_offset: float | None = None   # seconds from trigger (None = no impact heard)
+    impact_peak: float | None = None     # 0-1 normalized peak amplitude
 
 
 class SwingDB:
@@ -85,6 +87,12 @@ class SwingDB:
         if "trim_end" not in clip_cols:
             conn.execute("ALTER TABLE clips ADD COLUMN trim_end REAL")
 
+        swing_cols = {row[1] for row in conn.execute("PRAGMA table_info(swings)").fetchall()}
+        if "impact_offset" not in swing_cols:
+            conn.execute("ALTER TABLE swings ADD COLUMN impact_offset REAL")
+        if "impact_peak" not in swing_cols:
+            conn.execute("ALTER TABLE swings ADD COLUMN impact_peak REAL")
+
         conn.commit()
         conn.close()
 
@@ -123,6 +131,13 @@ class SwingDB:
         )
         self._conn.commit()
 
+    def set_impact(self, swing_id: str, offset: float | None, peak: float | None):
+        self._conn.execute(
+            "UPDATE swings SET impact_offset = ?, impact_peak = ? WHERE id = ?",
+            (offset, peak, swing_id),
+        )
+        self._conn.commit()
+
     def delete_swing(self, swing_id: str):
         """Delete a swing and its associated clips."""
         # Get clip filepaths to delete files
@@ -157,6 +172,8 @@ class SwingDB:
             tag=row["tag"],
             notes=row["notes"],
             clips=[dict(c) for c in clips],
+            impact_offset=row["impact_offset"] if "impact_offset" in row.keys() else None,
+            impact_peak=row["impact_peak"] if "impact_peak" in row.keys() else None,
         )
 
     def list_swings(
@@ -185,6 +202,8 @@ class SwingDB:
                 tag=row["tag"],
                 notes=row["notes"],
                 clips=[dict(c) for c in clips],
+                impact_offset=row["impact_offset"] if "impact_offset" in row.keys() else None,
+                impact_peak=row["impact_peak"] if "impact_peak" in row.keys() else None,
             ))
         return records
 

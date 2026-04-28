@@ -1,7 +1,12 @@
 <div class="swing-card" data-swing-id="{{ swing.id }}">
     <div class="swing-header">
         <span class="swing-time" data-ts="{{ swing.timestamp }}">{{ swing.timestamp }}</span>
-        <span class="swing-id">#{{ swing.id[:8] }}</span>
+        <span class="header-right">
+            {% if swing.impact_offset is not none %}
+            <span class="impact-badge" title="Impact heard at trigger{{ '%+0.2f'|format(swing.impact_offset) }}s, peak {{ '%.2f'|format(swing.impact_peak or 0) }}">🔊 impact</span>
+            {% endif %}
+            <span class="swing-id">#{{ swing.id[:8] }}</span>
+        </span>
     </div>
     <div class="swing-videos">
         {% for clip in swing.clips %}

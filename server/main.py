@@ -17,6 +17,7 @@ from pathlib import Path
 import uvicorn
 import yaml
 
+from audio_receiver import AudioReceiver
 from clip_saver import ClipSaver
 from db import SwingDB
 from gesture_detector import GestureDetector
@@ -120,6 +121,19 @@ class SwingCamServer:
         )
         self.pose_analyzer.on_analysis = self._on_analysis_complete
 
+        # Audio receiver (optional; one mic feeds all cameras for impact corroboration)
+        audio_cfg = self.config.get("audio", {}) or {}
+        self.audio_receiver: AudioReceiver | None = None
+        if audio_cfg.get("enabled", True):
+            self.audio_receiver = AudioReceiver(
+                host=audio_cfg.get("host", "0.0.0.0"),
+                port=audio_cfg.get("port", 9558),
+                sample_rate=audio_cfg.get("sample_rate", 16000),
+                buffer_seconds=audio_cfg.get("buffer_seconds", 10.0),
+            )
+        self._audio_window = audio_cfg.get("correlation_window", 0.6)
+        self._audio_threshold = audio_cfg.get("impact_threshold", 0.4)
+
         # For multi-camera swing correlation
         self._pending_events: list[SwingEvent] = []
         self._pending_lock = threading.Lock()
@@ -180,6 +194,31 @@ class SwingCamServer:
 
             logger.info(f"Configured camera: {name} ({cam['angle']}) on port {cam['port']}")
 
+    def _record_impact(self, swing_id: str, trigger_time: float, spike_duration: float):
+        """Look for an impact peak in the audio buffer near the swing trigger
+        and persist it on the swing record. No-op if audio isn't running."""
+        if self.audio_receiver is None:
+            return
+        # Center on the middle of the spike (impact usually near swing peak,
+        # not the very first frame of motion). Window is ±0.3s by default.
+        center = trigger_time + spike_duration / 2
+        result = self.audio_receiver.find_impact(
+            center_time=center,
+            window=self._audio_window,
+            threshold=self._audio_threshold,
+        )
+        if result is None:
+            logger.info(f"[audio] No impact peak near swing {swing_id[:8]}")
+            return
+        offset_from_center, peak = result
+        # Store offset relative to trigger_time, not center, for clarity.
+        offset_from_trigger = (center - trigger_time) + offset_from_center
+        self.db.set_impact(swing_id, offset_from_trigger, peak)
+        logger.info(
+            f"[audio] Impact for swing {swing_id[:8]}: "
+            f"peak={peak:.2f} at trigger+{offset_from_trigger:+.3f}s"
+        )
+
     def _on_swing_detected(self, event: SwingEvent):
         """
         Called when any camera detects a swing.
@@ -196,6 +235,7 @@ class SwingCamServer:
             # Simple path: one camera, one swing
             swing_id = self.db.generate_swing_id()
             self.db.create_swing(swing_id, event.trigger_time)
+            self._record_impact(swing_id, event.trigger_time, event.spike_duration)
             self.gesture_detector.start_watching(swing_id)
             cam_cfg = self.config["cameras"][0]
             angle = cam_cfg.get("angle", "unknown")
@@ -239,6 +279,10 @@ class SwingCamServer:
                 # so both clips cover the same time window and play in sync
                 shared_trigger = min(matched.trigger_time, event.trigger_time)
                 self.db.create_swing(swing_id, shared_trigger)
+                # Use the longer spike for impact correlation; either camera
+                # may have caught the actual contact moment.
+                impact_spike = max(matched.spike_duration, event.spike_duration)
+                self._record_impact(swing_id, shared_trigger, impact_spike)
                 self.gesture_detector.start_watching(swing_id)
 
                 for evt in [matched, event]:
@@ -291,6 +335,7 @@ class SwingCamServer:
                     return
                 swing_id = self.db.generate_swing_id()
                 self.db.create_swing(swing_id, event.trigger_time)
+                self._record_impact(swing_id, event.trigger_time, event.spike_duration)
                 self.gesture_detector.start_watching(swing_id)
                 cam_cfg = next(
                     c for c in self.config["cameras"] if c["name"] == event.camera_name
@@ -379,6 +424,8 @@ class SwingCamServer:
         # Start stream receivers
         for receiver in self.receivers:
             receiver.start()
+        if self.audio_receiver is not None:
+            self.audio_receiver.start()
 
         # Start web server in a thread
         web_cfg = self.config["server"]

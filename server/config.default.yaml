@@ -77,6 +77,21 @@ correlation:
   # on different cameras to consider them the same swing
   window_seconds: 2.0
 
+# Optional audio impact corroboration. The Pi-side stream daemon spins up
+# an audio sender automatically when a USB mic is plugged in. The server
+# accepts a single connection (other Pis with a mic get rejected and retry).
+# When a swing is detected, the server checks for an audio peak around the
+# swing trigger and records it on the swing — used to flag "real" impacts
+# vs. practice swings.
+audio:
+  enabled: true
+  host: "0.0.0.0"
+  port: 9558
+  sample_rate: 16000
+  buffer_seconds: 10.0          # how much recent audio to keep in RAM
+  correlation_window: 0.6       # ± seconds around swing trigger to look for impact
+  impact_threshold: 0.4         # 0.0-1.0 normalized peak; tune for your gain
+
 database:
   path: "~/.swingcam/swings.db"
 

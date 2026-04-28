@@ -575,14 +575,55 @@ cmd_stream() {
     local BITRATE=8000000       # 8 Mbps
     local INTRA_FRAMES=$FRAMERATE  # keyframe every ~1s (frame count, not ms)
     local MAX_GAIN=4               # cap analog gain to limit noise (default ~16)
+    local AUDIO_PORT=9558          # shared audio port on the server
+    local AUDIO_RATE=16000         # mono PCM @ 16kHz, plenty for impact detection
 
     echo "swing-cam streamer ($angle)"
     echo "  Resolution:  ${WIDTH}x${HEIGHT} @ ${FRAMERATE}fps"
     echo "  Bitrate:     $((BITRATE / 1000)) kbps"
     echo "  Streaming to: ${server_ip}:${port}"
 
-    # Ctrl+C exits cleanly instead of looping into the next retry.
-    trap 'echo; echo "Stream stopped."; exit 0' INT TERM
+    # Audio: only spin up if a USB capture device is plugged in. Both Pis
+    # run this loop unconditionally; only one connects to the server's
+    # single-client listener at a time. The other gets ECONNREFUSED and
+    # retries, which is the desired "either Pi can host the mic" behavior.
+    local mic_card=""
+    if command -v arecord &>/dev/null; then
+        # Pick the first capture card whose driver isn't the onboard bcm2835.
+        mic_card=$(arecord -l 2>/dev/null \
+            | awk '/^card [0-9]+:/ && !/bcm2835/ {gsub(":", "", $2); print $2; exit}')
+    fi
+
+    local audio_pid=""
+    if [ -n "$mic_card" ] && command -v ffmpeg &>/dev/null; then
+        echo "  Audio:       USB mic on card ${mic_card} → tcp://${server_ip}:${AUDIO_PORT}"
+        (
+            while true; do
+                ffmpeg -hide_banner -loglevel error \
+                    -f alsa -ac 1 -ar "$AUDIO_RATE" -i "plughw:${mic_card},0" \
+                    -f s16le "tcp://${server_ip}:${AUDIO_PORT}" 2>&1 \
+                    | sed 's/^/[audio] /' || true
+                echo "[audio] Disconnected (server full or down). Retrying in 10s..."
+                sleep 10
+            done
+        ) &
+        audio_pid=$!
+    elif [ -n "$mic_card" ]; then
+        echo "  Audio:       USB mic detected but ffmpeg missing — skipping"
+    else
+        echo "  Audio:       no USB microphone detected"
+    fi
+
+    # Ctrl+C exits cleanly instead of looping into the next retry. Also kills
+    # the audio child so it doesn't keep retrying after the parent is gone.
+    trap '
+        echo
+        if [ -n "${audio_pid:-}" ]; then
+            kill "$audio_pid" 2>/dev/null || true
+        fi
+        echo "Stream stopped."
+        exit 0
+    ' INT TERM
 
     # Quiet libcamera's INFO chatter; warnings/errors still surface.
     export LIBCAMERA_LOG_LEVELS='*:WARN'
