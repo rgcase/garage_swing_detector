@@ -160,6 +160,7 @@ class SwingCamServer:
                 roi=det_cfg.get("roi"),
                 confidence_threshold=det_cfg.get("confidence_threshold", 0.5),
                 spike_max_seconds=det_cfg.get("spike_max_seconds", 1.0),
+                flow_score_min=det_cfg.get("flow_score_min", 0.4),
                 on_swing=self._on_swing_detected,
             )
 

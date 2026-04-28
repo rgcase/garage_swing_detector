@@ -16,9 +16,12 @@ Stage 3 — Duration filter:
     A real swing's high-motion phase is very short (0.2-0.8s).
     Sustained motion (>1s) is rejected.
 
-Each stage produces a confidence score. The final confidence must exceed
-a threshold to trigger. Multi-camera agreement (handled in main.py)
-can boost confidence.
+Each stage produces a confidence score. The final confidence is the
+*product* of the three (multiplicative — every signal must score well,
+not just the average), gated by a hard floor on the optical-flow score
+so non-swing-shaped motion is rejected even if it happens to be brief
+and high-intensity. Multi-camera agreement (handled in main.py) can
+boost confidence.
 """
 
 import logging
@@ -56,6 +59,10 @@ class SwingDetector:
     FLOW_SPEED_MIN = 3.0       # Min avg flow magnitude in the active region
     FLOW_CONCENTRATION_MIN = 0.15  # Min fraction of flow in the peak region
 
+    # Hard floor on the optical-flow swing-shape score. Below this, the spike
+    # is rejected outright. Real swings score 0.6+; walking/waving score lower.
+    FLOW_SCORE_MIN = 0.4
+
     # Duration filter: high-motion phase must be this short
     SPIKE_MAX_SECONDS = 1.0
 
@@ -71,6 +78,7 @@ class SwingDetector:
         roi: list[float] | None = None,
         confidence_threshold: float = 0.5,
         spike_max_seconds: float = 1.0,
+        flow_score_min: float = 0.4,
         on_swing=None,
     ):
         self.camera_name = camera_name
@@ -80,6 +88,7 @@ class SwingDetector:
         self.roi = roi
         self.CONFIDENCE_THRESHOLD = confidence_threshold
         self.SPIKE_MAX_SECONDS = spike_max_seconds
+        self.FLOW_SCORE_MIN = flow_score_min
         self.on_swing = on_swing
 
         self._prev_gray: np.ndarray | None = None
@@ -332,15 +341,25 @@ class SwingDetector:
         # Check 3: Optical flow — is this swing-like motion?
         flow_score = self._compute_optical_flow_score()
 
-        # Check 4: Motion intensity — swings produce high peak motion
-        intensity_score = min(1.0, self._spike_peak / (self.motion_area_pct * 5))
+        # Hard gate: if the motion doesn't look like a swing in optical-flow
+        # terms, reject it outright. Otherwise brief + intense non-swing motion
+        # (waving, reaching for a ball) sails through on duration/intensity
+        # alone since those are easy to saturate.
+        if flow_score < self.FLOW_SCORE_MIN:
+            logger.info(
+                f"[{self.camera_name}] Rejected: flow_score {flow_score:.2f} "
+                f"< {self.FLOW_SCORE_MIN} (motion doesn't look swing-shaped)"
+            )
+            return
 
-        # Combined confidence
-        confidence = (
-            flow_score * 0.40 +
-            duration_score * 0.30 +
-            intensity_score * 0.30
-        )
+        # Check 4: Motion intensity — swings produce high peak motion. The
+        # divisor sets where intensity saturates: spike_peak >= motion_area_pct*10
+        # is a strong, full-credit signal; below that scales linearly.
+        intensity_score = min(1.0, self._spike_peak / (self.motion_area_pct * 10))
+
+        # Multiplicative scoring: weakness in any one signal drags the whole
+        # confidence down, instead of being averaged out by the others.
+        confidence = flow_score * duration_score * intensity_score
 
         logger.info(
             f"[{self.camera_name}] Spike analyzed: "

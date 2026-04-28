@@ -45,9 +45,17 @@ detection:
   # Region of interest (normalized 0.0-1.0, x, y, w, h)
   # Crop to just the hitting area to reduce false positives
   roi: null                   # null = full frame, or [0.2, 0.1, 0.6, 0.8]
-  # Confidence threshold for swing detection (0.0-1.0)
-  # Higher = fewer false positives, lower = more sensitive
+  # Confidence is the *product* of three sub-scores:
+  #   flow_score × duration_score × intensity_score
+  # Each is 0.0-1.0; threshold defaults to 0.5. Real swings typically
+  # produce ~0.7 in each (product ≈ 0.34-0.5). If the system is too
+  # sensitive (false swings), raise this to 0.6+. Too strict (missing
+  # real swings)? Drop to 0.35-0.4.
   confidence_threshold: 0.5
+  # Hard floor on the optical-flow swing-shape score. Spikes whose motion
+  # doesn't *look* like a swing (waving, reaching, walking) get rejected
+  # outright before confidence is computed. Real swings score 0.6+.
+  flow_score_min: 0.4
   # Max duration (seconds) of a motion spike to count as a swing
   # Sustained motion longer than this is rejected (walking, etc)
   spike_max_seconds: 1.0
