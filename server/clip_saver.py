@@ -44,10 +44,20 @@ class ClipSaver:
         trigger_time: float,
         camera_name: str,
         swing_id: str,
-    ) -> str | None:
+        spike_start: float | None = None,
+        spike_duration: float = 0.0,
+        trim_pad: float = 0.5,
+    ) -> tuple[str, float | None, float | None] | None:
         """
         Wait for post-swing frames, extract from buffer, write MP4.
-        Returns the output file path, or None on failure.
+        Returns (filename, trim_start, trim_end) on success, or None on failure.
+
+        trim_start / trim_end are in *playback-time seconds* (relative to
+        clip start) and bracket the actual swing motion. They're computed
+        from the frame indices of spike_start / spike_start+spike_duration,
+        not from real-time seconds — this stays correct even when the saved
+        clip has fewer frames than expected (network drops, partial buffer)
+        and is therefore played back faster than real time.
 
         This is meant to be called in a separate thread so it doesn't
         block the frame processing pipeline.
@@ -118,8 +128,31 @@ class ClipSaver:
             f"({len(frames)} frames, {duration:.1f}s)"
         )
 
+        # Compute trim window in playback time using frame indices. This is
+        # robust to per-frame real-time spacing (drops, jitter) — wherever the
+        # swing frames landed in the saved sequence, the player will jump there.
+        trim_start: float | None = None
+        trim_end: float | None = None
+        if spike_start is not None:
+            spike_end = spike_start + spike_duration
+            spike_start_idx = next(
+                (i for i, f in enumerate(frames) if f.timestamp >= spike_start),
+                len(frames) - 1,
+            )
+            spike_end_idx = next(
+                (i for i, f in enumerate(frames) if f.timestamp >= spike_end),
+                len(frames) - 1,
+            )
+            pad_frames = int(trim_pad * self.fps)
+            trim_start = round(max(0, spike_start_idx - pad_frames) / self.fps, 2)
+            trim_end = round(min(len(frames), spike_end_idx + pad_frames) / self.fps, 2)
+            logger.info(
+                f"[{camera_name}] Trim: spike at frames {spike_start_idx}-{spike_end_idx} "
+                f"of {len(frames)} → playback [{trim_start:.2f}s, {trim_end:.2f}s]"
+            )
+
         self._enforce_storage_limit()
-        return filename
+        return filename, trim_start, trim_end
 
     def _enforce_storage_limit(self):
         """Delete oldest clips if total storage exceeds the configured limit."""
@@ -142,16 +175,27 @@ class ClipSaver:
         trigger_time: float,
         camera_name: str,
         swing_id: str,
+        spike_start: float | None = None,
+        spike_duration: float = 0.0,
         callback=None,
     ):
         """
-        Non-blocking clip save. Spawns a thread, calls callback(filepath)
-        when done.
+        Non-blocking clip save. Spawns a thread, calls
+        callback(swing_id, camera_name, filename, trim_start, trim_end)
+        when done. trim_start / trim_end are None when spike_start is None
+        or the save failed.
         """
         def _run():
-            filepath = self.save_clip(buffer, trigger_time, camera_name, swing_id)
+            result = self.save_clip(
+                buffer, trigger_time, camera_name, swing_id,
+                spike_start=spike_start, spike_duration=spike_duration,
+            )
+            if result:
+                filename, trim_s, trim_e = result
+            else:
+                filename, trim_s, trim_e = None, None, None
             if callback:
-                callback(swing_id, camera_name, filepath)
+                callback(swing_id, camera_name, filename, trim_s, trim_e)
 
         t = threading.Thread(target=_run, daemon=True, name=f"clip-{swing_id}")
         t.start()
