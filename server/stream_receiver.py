@@ -10,6 +10,7 @@ Supported source formats:
 """
 
 import logging
+import socket
 import subprocess
 import threading
 import time
@@ -136,7 +137,11 @@ class StreamReceiver:
             self._thread.join(timeout=5)
 
     def _build_ffmpeg_cmd(self) -> list[str]:
-        """Build the FFmpeg command based on source type."""
+        """Build the FFmpeg command based on source type.
+
+        For tcp:// sources the listener is owned by Python (see
+        ``_receive_tcp_listen``) and FFmpeg reads H.264 from stdin instead.
+        """
         source = self.source
         is_tcp_listen = source.startswith("tcp://")
         is_rtsp = source.startswith("rtsp://")
@@ -146,10 +151,8 @@ class StreamReceiver:
         cmd = ["ffmpeg", "-y", "-loglevel", "warning"]
 
         if is_tcp_listen:
-            # Pi push mode: listen for incoming TCP H.264 stream
-            if "?listen" not in source:
-                source += "?listen=1"
-            cmd += ["-f", "h264", "-i", source]
+            # H.264 elementary stream piped in from the accepted TCP socket.
+            cmd += ["-f", "h264", "-i", "pipe:0"]
         elif is_rtsp:
             # RTSP pull mode: connect to IP camera
             cmd += [
@@ -192,15 +195,135 @@ class StreamReceiver:
         """Outer loop: restarts FFmpeg if the stream disconnects."""
         while self._running:
             try:
-                self._receive_stream()
+                if self.source.startswith("tcp://"):
+                    self._receive_tcp_listen()
+                else:
+                    self._receive_stream()
             except Exception as e:
                 logger.warning(f"[{self.name}] Stream error: {e}. Reconnecting in 3s...")
                 time.sleep(3)
 
+    def _parse_tcp_endpoint(self) -> tuple[str, int]:
+        rest = self.source.split("://", 1)[1].split("?", 1)[0]
+        host, _, port_str = rest.rpartition(":")
+        return host or "0.0.0.0", int(port_str)
+
+    def _receive_tcp_listen(self):
+        """
+        Own the TCP listener in Python so the socket is always re-armed.
+
+        FFmpeg's built-in ``?listen=1`` accepts exactly one connection and
+        then closes the listening socket. If the Pi disconnects uncleanly
+        (power loss, WiFi blip, systemd kill) the kernel never marks the
+        peer as dead — FFmpeg blocks on a recv that will never return, the
+        wrapper thread blocks reading raw frames, and no new listener is
+        ever opened. Fresh Pi connection attempts then get ECONNREFUSED.
+
+        With Python owning the socket we set SO_REUSEADDR, accept one
+        connection at a time, and use a recv timeout so a silent peer is
+        torn down within a few seconds. This mirrors the audio receiver.
+        """
+        host, port = self._parse_tcp_endpoint()
+        listen = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listen.settimeout(1.0)
+        try:
+            listen.bind((host, port))
+            listen.listen(1)
+            logger.info(f"[{self.name}] Listening on tcp://{host}:{port}")
+            while self._running:
+                try:
+                    client, addr = listen.accept()
+                except socket.timeout:
+                    continue
+                try:
+                    self._serve_tcp_client(client, addr)
+                finally:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+        finally:
+            try:
+                listen.close()
+            except Exception:
+                pass
+
+    def _serve_tcp_client(self, client: socket.socket, addr: tuple):
+        """Pipe one accepted TCP H.264 stream through FFmpeg and into the buffer."""
+        logger.info(f"[{self.name}] Pi connected from {addr[0]}:{addr[1]}")
+        # 5s of silence on a 30fps stream means the Pi is gone.
+        client.settimeout(5.0)
+
+        cmd = self._build_ffmpeg_cmd()
+        logger.info(f"[{self.name}] Starting FFmpeg: {' '.join(cmd)}")
+        self._process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Pump bytes from the TCP socket into FFmpeg's stdin.
+        def _pump():
+            try:
+                while self._running:
+                    try:
+                        data = client.recv(65536)
+                    except socket.timeout:
+                        logger.warning(
+                            f"[{self.name}] No data from {addr[0]} for 5s; dropping connection"
+                        )
+                        break
+                    if not data:
+                        break
+                    try:
+                        self._process.stdin.write(data)
+                    except (BrokenPipeError, OSError):
+                        break
+            finally:
+                try:
+                    self._process.stdin.close()
+                except Exception:
+                    pass
+
+        pumper = threading.Thread(
+            target=_pump, name=f"recv-pump-{self.name}", daemon=True
+        )
+        pumper.start()
+
+        frame_size = self.width * self.height * 3  # BGR24
+        try:
+            while self._running:
+                raw = self._process.stdout.read(frame_size)
+                if len(raw) < frame_size:
+                    logger.warning(
+                        f"[{self.name}] Short read ({len(raw)}/{frame_size}), stream ended"
+                    )
+                    break
+                frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+                    (self.height, self.width, 3)
+                )
+                tf = self.buffer.push(frame, time.time())
+                for cb in self._on_frame_callbacks:
+                    try:
+                        cb(tf)
+                    except Exception as e:
+                        logger.error(f"[{self.name}] Frame callback error: {e}")
+        finally:
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=2)
+            except Exception:
+                pass
+            self._process = None
+            pumper.join(timeout=1)
+            logger.info(f"[{self.name}] Pi disconnected: {addr[0]}:{addr[1]}")
+
     def _receive_stream(self):
         """
-        Launch FFmpeg to receive and decode the stream, piping raw
-        BGR24 frames to us via stdout.
+        Launch FFmpeg to pull from a non-TCP source (RTSP/avfoundation/v4l2/file)
+        and pipe raw BGR24 frames back to us via stdout.
         """
         frame_size = self.width * self.height * 3  # BGR24
         cmd = self._build_ffmpeg_cmd()
