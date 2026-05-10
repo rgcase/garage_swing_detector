@@ -10,6 +10,7 @@ import logging
 import threading
 import urllib.error
 import urllib.request
+from email.header import Header
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class Notifier:
 
         if enabled and not topic:
             logger.warning("ntfy enabled but no topic configured — disabling")
+        elif self.enabled:
+            logger.info(f"ntfy notifications enabled → {self.server}/{self.topic}")
 
     def notify_swing(self, swing_id: str, impact_peak: float | None = None):
         """Fire-and-forget swing notification. Returns immediately."""
@@ -57,8 +60,19 @@ class Notifier:
 
     def _post(self, title: str, body: str):
         url = f"{self.server}/{self.topic}"
+        # urllib forces latin-1 on header values, which breaks emoji in titles.
+        # ntfy decodes RFC 2047 ("=?utf-8?Q?...?=") encoded headers, so encode
+        # only when the raw title can't go through latin-1 as-is.
+        try:
+            title.encode("latin-1")
+            encoded_title = title
+        except UnicodeEncodeError:
+            h = Header()
+            h.append(title, "utf-8")
+            encoded_title = h.encode()
+
         headers = {
-            "Title": title,
+            "Title": encoded_title,
             "Priority": self.priority,
             "Tags": self.tags,
         }
@@ -72,6 +86,8 @@ class Notifier:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 if resp.status >= 400:
                     logger.warning(f"ntfy returned {resp.status}")
+                else:
+                    logger.info(f"ntfy notified: {title}")
         except urllib.error.URLError as e:
             logger.warning(f"ntfy post failed: {e}")
         except Exception as e:

@@ -211,23 +211,37 @@ class SwingCamServer:
 
         Used by the UI's "Test swing" button. Goes through `_on_swing_detected`
         so it exercises DB write, audio correlation, ntfy push, gesture watcher,
-        and clip save (the last only succeeds if a stream is connected). Returns
-        the camera name that was targeted.
+        and clip save. Picks a camera with frames in its buffer so the saved
+        clip actually contains video; falls back to cameras[0] if nothing is
+        streaming.
         """
         if not self.config.get("cameras"):
             raise RuntimeError("no cameras configured")
-        cam = self.config["cameras"][0]
-        # Confidence above SINGLE_CAM_CONFIDENCE_MIN so the multi-cam flush
-        # path won't reject it; spike_duration roughly matches a real swing.
+        # Prefer a camera whose buffer has recent frames — otherwise the test
+        # creates an orphan DB row with no clip and looks broken.
+        chosen = None
+        now = time.time()
+        for cam in self.config["cameras"]:
+            buf = self.buffers.get(cam["name"])
+            latest = buf.get_latest() if buf else None
+            if latest and (now - latest.timestamp) < 5.0:
+                chosen = cam
+                break
+        if chosen is None:
+            chosen = self.config["cameras"][0]
+            logger.warning(
+                f"Test swing: no streams connected; using {chosen['name']} "
+                "anyway (clip will be empty)"
+            )
         event = SwingEvent(
             trigger_time=time.time(),
-            camera_name=cam["name"],
+            camera_name=chosen["name"],
             motion_level=5.0,
             confidence=0.8,
             spike_duration=0.5,
         )
         self._on_swing_detected(event)
-        return cam["name"]
+        return chosen["name"]
 
     def _notify_swing(self, swing_id: str):
         """Fire a push notification for a freshly-created swing.
