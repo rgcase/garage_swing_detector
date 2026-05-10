@@ -23,11 +23,42 @@
         }
 
         .compare-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .compare-grid.overlay-mode { display: none; }
         .compare-side {
             flex: 1; min-width: 300px;
             background: #141414; border: 1px solid #222; border-radius: 10px;
             overflow: hidden;
         }
+
+        .overlay-pane { display: none; margin-top: 1rem; }
+        .overlay-pane.active { display: block; }
+        .overlay-stage {
+            position: relative; width: 100%; max-width: 800px; margin: 0 auto;
+            background: #000; border: 1px solid #222; border-radius: 10px;
+            overflow: hidden;
+        }
+        .overlay-stage video {
+            width: 100%; display: block;
+        }
+        .overlay-stage .top-video {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            mix-blend-mode: normal;
+        }
+        .overlay-controls {
+            display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+            margin-top: 0.75rem; max-width: 800px; margin-left: auto; margin-right: auto;
+            font-size: 0.85rem; color: #aaa;
+        }
+        .overlay-controls .opacity-slider {
+            flex: 1; min-width: 200px; accent-color: #4ade80;
+        }
+        .overlay-controls .swap-btn { font-size: 0.8rem; }
+        .overlay-meta {
+            font-size: 0.75rem; color: #666; padding: 0.5rem 0; text-align: center;
+            max-width: 800px; margin: 0 auto;
+        }
+        .overlay-meta .a { color: #4ade80; }
+        .overlay-meta .b { color: #60a5fa; }
         .compare-side .side-header {
             padding: 0.75rem 1rem; border-bottom: 1px solid #222;
             display: flex; justify-content: space-between; align-items: center;
@@ -98,7 +129,25 @@
         <button class="primary" onclick="syncPlay()">Play Both</button>
         <button onclick="syncPause()">Pause Both</button>
         <button onclick="syncRestart()">Restart</button>
+        <button id="overlay-toggle" onclick="toggleOverlay()" style="margin-left:auto;">Overlay mode</button>
     </div>
+
+    {% if swing_a and swing_b %}
+    <div class="overlay-pane" id="overlay-pane">
+        <div class="overlay-meta">
+            <span class="a">A: {{ swing_a.timestamp }}</span>
+            &nbsp;over&nbsp;
+            <span class="b">B: {{ swing_b.timestamp }}</span>
+        </div>
+        <div class="overlay-stage" id="overlay-stage"></div>
+        <div class="overlay-controls">
+            <span>Top opacity</span>
+            <input type="range" class="opacity-slider" id="opacity-slider" min="0" max="100" value="50">
+            <span id="opacity-value">50%</span>
+            <button class="swap-btn" onclick="swapOverlay()">Swap A/B</button>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="compare-grid" id="compare-grid" style="margin-top:1rem;">
         {% if swing_a %}
@@ -141,6 +190,9 @@
     </div>
 
     <script>
+    const swingA = {{ {'clips': swing_a.clips} | tojson if swing_a else 'null' }};
+    const swingB = {{ {'clips': swing_b.clips} | tojson if swing_b else 'null' }};
+
     function updateComparison() {
         const a = document.getElementById('select-a').value;
         const b = document.getElementById('select-b').value;
@@ -155,21 +207,129 @@
     }
 
     function syncPlay() {
-        getAllVideos().forEach(v => v.play());
+        const vids = overlayActive() ? overlayVideos() : getAllVideos();
+        vids.forEach(v => v.play());
     }
     function syncPause() {
-        getAllVideos().forEach(v => v.pause());
+        const vids = overlayActive() ? overlayVideos() : getAllVideos();
+        vids.forEach(v => v.pause());
     }
     function syncRestart() {
-        getAllVideos().forEach(v => { v.currentTime = 0; v.play(); });
+        const vids = overlayActive() ? overlayVideos() : getAllVideos();
+        vids.forEach(v => { v.currentTime = trimStartFor(v); v.play(); });
     }
 
-    // Sync seek across all videos
-    const videos = getAllVideos();
-    if (videos.length > 1) {
-        videos[0].addEventListener('seeked', () => {
-            const t = videos[0].currentTime;
-            videos.forEach((v, i) => { if (i > 0) v.currentTime = t; });
+    function trimStartFor(v) {
+        const ts = parseFloat(v.dataset.trimStart);
+        return isNaN(ts) ? 0 : ts;
+    }
+
+    // Side-by-side mode: keep secondaries seeked to primary
+    const sideVideos = getAllVideos();
+    if (sideVideos.length > 1) {
+        sideVideos[0].addEventListener('seeked', () => {
+            const t = sideVideos[0].currentTime;
+            sideVideos.forEach((v, i) => { if (i > 0) v.currentTime = t; });
+        });
+    }
+
+    // ── Overlay mode ──
+    // Pick the first clip from A whose angle matches one in B; that's the
+    // pair that's actually meaningful to overlay (face-on on face-on, etc).
+    function pickOverlayPair(a, b) {
+        if (!a || !b) return null;
+        for (const ca of a.clips) {
+            const angle = ca.angle || ca.camera_name;
+            const cb = b.clips.find(c => (c.angle || c.camera_name) === angle);
+            if (cb) return { a: ca, b: cb, angle };
+        }
+        return null;
+    }
+
+    let overlaySwapped = false;
+
+    function overlayActive() {
+        const pane = document.getElementById('overlay-pane');
+        return pane && pane.classList.contains('active');
+    }
+    function overlayVideos() {
+        return [...document.querySelectorAll('#overlay-stage video')];
+    }
+
+    function buildOverlayStage() {
+        const stage = document.getElementById('overlay-stage');
+        if (!stage) return;
+        stage.innerHTML = '';
+        const pair = pickOverlayPair(swingA, swingB);
+        if (!pair) {
+            stage.innerHTML = '<div style="padding:2rem;text-align:center;color:#888;">No matching camera angle between these swings.</div>';
+            return;
+        }
+        const bottom = overlaySwapped ? pair.b : pair.a;
+        const top = overlaySwapped ? pair.a : pair.b;
+
+        function vid(clip, isTop) {
+            const v = document.createElement('video');
+            v.muted = true;
+            v.playsInline = true;
+            v.preload = 'metadata';
+            v.src = '/clips/' + clip.filepath;
+            if (clip.trim_start !== null && clip.trim_start !== undefined) {
+                v.dataset.trimStart = clip.trim_start;
+            }
+            if (isTop) v.classList.add('top-video');
+            return v;
+        }
+
+        const bottomEl = vid(bottom, false);
+        const topEl = vid(top, true);
+        topEl.style.opacity = (document.getElementById('opacity-slider').value / 100).toString();
+        stage.appendChild(bottomEl);
+        stage.appendChild(topEl);
+
+        // Seek both to their swing-start so the impact moment lines up.
+        const seekBoth = () => {
+            bottomEl.currentTime = trimStartFor(bottomEl);
+            topEl.currentTime = trimStartFor(topEl);
+        };
+        bottomEl.addEventListener('loadedmetadata', seekBoth, { once: true });
+        topEl.addEventListener('loadedmetadata', seekBoth, { once: true });
+
+        // Bottom drives playback; top mirrors play/pause/scrub at matching offset.
+        bottomEl.addEventListener('play', () => topEl.play());
+        bottomEl.addEventListener('pause', () => topEl.pause());
+        bottomEl.addEventListener('seeked', () => {
+            const offset = bottomEl.currentTime - trimStartFor(bottomEl);
+            topEl.currentTime = trimStartFor(topEl) + offset;
+        });
+        bottomEl.controls = true;
+    }
+
+    function toggleOverlay() {
+        const pane = document.getElementById('overlay-pane');
+        const grid = document.getElementById('compare-grid');
+        const btn = document.getElementById('overlay-toggle');
+        if (!pane) return;
+        const willActivate = !pane.classList.contains('active');
+        pane.classList.toggle('active', willActivate);
+        grid.classList.toggle('overlay-mode', willActivate);
+        btn.classList.toggle('primary', willActivate);
+        btn.textContent = willActivate ? 'Side-by-side' : 'Overlay mode';
+        if (willActivate) buildOverlayStage();
+    }
+
+    function swapOverlay() {
+        overlaySwapped = !overlaySwapped;
+        buildOverlayStage();
+    }
+
+    const slider = document.getElementById('opacity-slider');
+    if (slider) {
+        slider.addEventListener('input', () => {
+            const pct = slider.value;
+            document.getElementById('opacity-value').textContent = pct + '%';
+            const top = document.querySelector('#overlay-stage .top-video');
+            if (top) top.style.opacity = (pct / 100).toString();
         });
     }
     </script>
