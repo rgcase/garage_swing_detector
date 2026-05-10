@@ -323,6 +323,92 @@ def create_app(
     async def trends_page(request: Request):
         return templates.TemplateResponse("trends.html", {"request": request})
 
+    @app.get("/api/reel")
+    async def api_reel(days: int = 7, limit: int = 50):
+        """Auto-generate a highlight reel: every 'good' swing in the last
+        N days, trimmed to its swing window, concatenated into one MP4.
+        Picks the face-on angle when available so the reel stays consistent.
+        """
+        cutoff = datetime.now().timestamp() - days * 86400
+        cutoff_iso = datetime.fromtimestamp(cutoff).isoformat()
+
+        good = [
+            s for s in db.list_swings(limit=limit, tag_filter="good")
+            if s.timestamp >= cutoff_iso
+        ]
+        if not good:
+            raise HTTPException(404, f"No 'good' swings in the last {days} days")
+
+        clips_path = Path(clips_dir)
+        # Pick one clip per swing: prefer face-on, else the first; require trim.
+        selected: list[tuple[Path, float, float]] = []
+        for s in good:
+            if not s.clips:
+                continue
+            face_on = next((c for c in s.clips if (c.get("angle") or "") == "face-on"), None)
+            clip = face_on or s.clips[0]
+            f = clips_path / clip["filepath"]
+            if not f.exists():
+                continue
+            ts = clip.get("trim_start")
+            te = clip.get("trim_end")
+            if ts is None or te is None or te <= ts:
+                continue
+            selected.append((f, float(ts), float(te)))
+
+        if len(selected) < 1:
+            raise HTTPException(
+                404, "No 'good' swings with usable trim windows in that range"
+            )
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        # Build a single filter_complex: trim each input to its swing window
+        # and concat the results. One re-encode pass; frame-accurate cuts.
+        inputs: list[str] = []
+        for path, _, _ in selected:
+            inputs.extend(["-i", str(path)])
+
+        filter_parts = []
+        for i, (_, ts, te) in enumerate(selected):
+            filter_parts.append(
+                f"[{i}:v]trim=start={ts:.3f}:end={te:.3f},"
+                f"setpts=PTS-STARTPTS,scale=-2:720[v{i}]"
+            )
+        concat_inputs = "".join(f"[v{i}]" for i in range(len(selected)))
+        filter_parts.append(f"{concat_inputs}concat=n={len(selected)}:v=1:a=0[out]")
+        filter_str = ";".join(filter_parts)
+
+        cmd = [
+            "ffmpeg", "-y",
+            *inputs,
+            "-filter_complex", filter_str,
+            "-map", "[out]",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "22",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            tmp_path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True)
+        if proc.returncode != 0:
+            logger.error(
+                f"Reel FFmpeg failed: {proc.stderr.decode(errors='replace')}"
+            )
+            raise HTTPException(500, "Failed to generate reel")
+
+        return FileResponse(
+            tmp_path,
+            media_type="video/mp4",
+            filename=f"swing_reel_{days}d.mp4",
+        )
+
+    @app.get("/reel", response_class=HTMLResponse)
+    async def reel_page(request: Request):
+        return templates.TemplateResponse("reel.html", {"request": request})
+
     @app.get("/api/swings/{swing_id}/sequence")
     async def api_swing_sequence(swing_id: str):
         """Generate a 4-up key-frame strip (address / top / impact / finish)."""

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛳</text></svg>">
+    <title>swing-cam | Highlight Reel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; padding: 1.5rem; max-width: 900px; margin: 0 auto; }
+        h1 { font-size: 1.3rem; margin-bottom: 0.3rem; }
+        .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+        a { color: #4ade80; text-decoration: none; }
+
+        .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
+        .controls .label { font-size: 0.85rem; color: #888; margin-right: 0.5rem; }
+        .controls button {
+            padding: 0.4rem 1rem; background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+            color: #e0e0e0; cursor: pointer; font-size: 0.85rem;
+        }
+        .controls button.active { border-color: #4ade80; color: #4ade80; }
+        .controls button.primary { background: #1a3a1a; border-color: #4ade80; color: #4ade80; }
+        .controls button:disabled { opacity: 0.5; cursor: wait; }
+
+        .stage {
+            background: #111; border: 1px solid #222; border-radius: 8px;
+            padding: 1rem; min-height: 320px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .stage .empty { color: #555; font-size: 0.9rem; text-align: center; padding: 2rem; }
+        .stage video { width: 100%; max-width: 800px; border-radius: 6px; background: #000; }
+        .stage .spinner { color: #888; font-size: 0.9rem; }
+        .stage .error { color: #f87171; font-size: 0.9rem; text-align: center; padding: 2rem; }
+
+        .download-row { margin-top: 1rem; text-align: right; }
+        .download-row a {
+            display: inline-block; padding: 0.4rem 1rem;
+            background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Highlight Reel</h1>
+    <p class="subtitle">Auto-compiled from every swing tagged 👍 Good in the selected window. <a href="/">&larr; Back</a></p>
+
+    <div class="controls">
+        <span class="label">Window</span>
+        <button data-days="7" class="active">7 days</button>
+        <button data-days="30">30 days</button>
+        <button data-days="90">90 days</button>
+        <button id="generate" class="primary" style="margin-left:auto;">Generate</button>
+    </div>
+
+    <div class="stage" id="stage">
+        <div class="empty">Pick a window and press Generate.</div>
+    </div>
+    <div class="download-row" id="download-row" style="display:none;"></div>
+
+    <script>
+    let currentDays = 7;
+
+    document.querySelectorAll('.controls button[data-days]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.controls button[data-days]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentDays = parseInt(btn.dataset.days);
+        });
+    });
+
+    document.getElementById('generate').addEventListener('click', async () => {
+        const stage = document.getElementById('stage');
+        const dlRow = document.getElementById('download-row');
+        const btn = document.getElementById('generate');
+        stage.innerHTML = '<div class="spinner">Stitching reel… can take a minute for larger windows.</div>';
+        dlRow.style.display = 'none';
+        btn.disabled = true;
+
+        try {
+            const url = `/api/reel?days=${currentDays}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+                let msg = 'Failed to generate reel';
+                try {
+                    const j = await res.json();
+                    if (j.detail) msg = j.detail;
+                } catch (_) {}
+                stage.innerHTML = `<div class="error">${msg}</div>`;
+                return;
+            }
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            stage.innerHTML = `<video controls autoplay muted playsinline src="${blobUrl}"></video>`;
+            dlRow.innerHTML = `<a href="${blobUrl}" download="swing_reel_${currentDays}d.mp4">⬇ Download</a>`;
+            dlRow.style.display = 'block';
+        } catch (e) {
+            stage.innerHTML = `<div class="error">${e.message || e}</div>`;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+    </script>
+</body>
+</html>
