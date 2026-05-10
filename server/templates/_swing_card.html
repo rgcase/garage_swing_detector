@@ -50,6 +50,7 @@
         <button class="analysis-toggle notes-toggle" onclick="toggleNotes('{{ swing.id }}')">Notes{% if swing.notes %} •{% endif %} ▾</button>
         <button class="analysis-toggle" onclick="toggleAnalysis('{{ swing.id }}')">Analysis ▾</button>
         <a class="tag-btn" href="/api/swings/{{ swing.id }}/export" download style="text-decoration:none">Export</a>
+        <a class="tag-btn" href="/api/swings/{{ swing.id }}/sequence" target="_blank" style="text-decoration:none">Sequence</a>
         <button class="tag-btn delete" onclick="deleteSwing('{{ swing.id }}')">🗑</button>
     </div>
     <div class="notes-panel" id="notes-{{ swing.id }}">

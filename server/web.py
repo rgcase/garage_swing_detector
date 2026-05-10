@@ -323,6 +323,114 @@ def create_app(
     async def trends_page(request: Request):
         return templates.TemplateResponse("trends.html", {"request": request})
 
+    @app.get("/api/swings/{swing_id}/sequence")
+    async def api_swing_sequence(swing_id: str):
+        """Generate a 4-up key-frame strip (address / top / impact / finish)."""
+        swing = db.get_swing(swing_id)
+        if not swing or not swing.clips:
+            raise HTTPException(404, "Swing not found")
+
+        analyses = db.get_analysis(swing_id)
+        analysis_by_cam = {a["camera_name"]: a for a in analyses}
+
+        # Prefer the first clip that has analysis; fall back to the first clip.
+        clip = next(
+            (c for c in swing.clips if c["camera_name"] in analysis_by_cam),
+            swing.clips[0],
+        )
+        clip_path = Path(clips_dir) / clip["filepath"]
+        if not clip_path.exists():
+            raise HTTPException(404, "Clip file not found")
+
+        # Probe the file for frame count + fps so frame indices stay in-range.
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_frames,r_frame_rate",
+             "-of", "default=nokey=1:noprint_wrappers=1", str(clip_path)],
+            capture_output=True, text=True,
+        )
+        if probe.returncode != 0:
+            raise HTTPException(500, "Failed to probe clip")
+        rate_str, _, frames_str = probe.stdout.strip().partition("\n")
+        try:
+            num, den = rate_str.split("/")
+            clip_fps = float(num) / float(den)
+            total_frames = int(frames_str)
+        except (ValueError, ZeroDivisionError):
+            raise HTTPException(500, "Could not parse clip metadata")
+
+        if total_frames < 8:
+            raise HTTPException(400, "Clip too short for sequence")
+
+        analysis = analysis_by_cam.get(clip["camera_name"])
+        phases = []
+        if analysis and analysis.get("phases_json"):
+            try:
+                phases = json.loads(analysis["phases_json"])
+            except json.JSONDecodeError:
+                phases = []
+        phase_lookup = {p["phase"]: p for p in phases}
+
+        last_frame = total_frames - 1
+
+        def _phase_frame(name: str, default: int) -> int:
+            p = phase_lookup.get(name)
+            if not p:
+                return default
+            return max(0, min(last_frame, int(p["start_frame"])))
+
+        # Default fallbacks if there's no pose analysis (even-spaced sample).
+        top_default = total_frames // 2
+        impact_default = int(total_frames * 0.6)
+
+        address_frame = 0
+        top_frame = _phase_frame("top", top_default)
+        impact_frame = _phase_frame("impact", impact_default)
+
+        # If the audio mic recorded a real impact, anchor the impact frame to it.
+        # Trigger lands at ~pre_seconds into the clip; impact_offset is seconds
+        # from trigger. Frame-rate math is approximate (not robust to drops),
+        # but agrees with the pose estimate to within a frame in normal conditions.
+        if swing.impact_offset is not None:
+            pre_seconds = float(_config.get("clips", {}).get("pre_seconds", 3.0))
+            anchored = int(round((pre_seconds + swing.impact_offset) * clip_fps))
+            if 0 <= anchored <= last_frame:
+                impact_frame = anchored
+
+        finish_frame = last_frame
+
+        # Ensure monotonic ordering (in case detection produced weird phases).
+        seq = sorted({address_frame, top_frame, impact_frame, finish_frame})
+        # Pad back to 4 frames if dedup collapsed any (e.g. very short clip).
+        while len(seq) < 4:
+            seq.append(min(last_frame, seq[-1] + 1))
+
+        # Build a select expression that grabs exactly those four frames.
+        select_expr = "+".join(f"eq(n\\,{idx})" for idx in seq)
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(clip_path),
+            "-vf", f"select='{select_expr}',scale=-2:480,tile=4x1",
+            "-frames:v", "1",
+            "-vsync", "0",
+            "-q:v", "3",
+            tmp_path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True)
+        if proc.returncode != 0:
+            logger.error(f"Sequence FFmpeg failed: {proc.stderr.decode(errors='replace')}")
+            raise HTTPException(500, "Failed to generate sequence")
+
+        return FileResponse(
+            tmp_path,
+            media_type="image/jpeg",
+            filename=f"swing_{swing_id}_sequence.jpg",
+        )
+
     @app.get("/api/stats")
     async def api_stats():
         return db.get_stats()

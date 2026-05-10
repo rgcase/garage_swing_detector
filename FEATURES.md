@@ -28,6 +28,7 @@
 - [x] Side-by-side video export
 - [x] RTSP and USB camera support
 - [x] Trend charts (tempo, head stability, rotation, daily volume over time)
+- [x] Swing sequence export (4-up address/top/impact/finish strip image)
 
 ## Up Next
 
@@ -49,9 +50,6 @@ Ghost-overlay a reference "good" swing on top of the current one with adjustable
 
 ### Auto-highlight reel
 Weekly auto-generated compilation of swings tagged "good", exported as a single video with transitions.
-
-### Swing sequence export
-Export a swing as a strip of key frames (address, top, impact, finish) as a single image. Classic golf instruction format.
 
 ### Launch monitor integration
 If the user has a launch monitor (Garmin R10, Rapsodo, etc.), correlate swing clips with launch data (ball speed, carry distance, spin). Would require API integration per device.
