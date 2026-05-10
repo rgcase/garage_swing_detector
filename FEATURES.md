@@ -27,13 +27,11 @@
 - [x] Auto-trim ("Swing Only" button seeks to detected swing bounds)
 - [x] Side-by-side video export
 - [x] RTSP and USB camera support
+- [x] Trend charts (tempo, head stability, rotation, daily volume over time)
 
 ## Up Next
 
 ## Planned
-
-### Trend charts
-Plot tempo, head stability, hip/shoulder rotation over weeks and months. Track consistency and improvement over time. Filter by club if tagged.
 
 ### Club tagging
 Quick-select which club you're hitting (D, 3W, 7i, PW, etc.) per swing or per session. Filter and compare metrics by club. A driver swing has very different metrics than a wedge.

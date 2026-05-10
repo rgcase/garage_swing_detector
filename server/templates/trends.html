@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛳</text></svg>">
+    <title>swing-cam | Trends</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+        h1 { font-size: 1.3rem; margin-bottom: 0.3rem; }
+        .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.5rem; }
+        a { color: #4ade80; text-decoration: none; }
+
+        .range-select { margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .range-select button {
+            padding: 0.4rem 1rem; background: #1a1a1a; border: 1px solid #333; border-radius: 6px;
+            color: #e0e0e0; cursor: pointer; font-size: 0.85rem;
+        }
+        .range-select button.active { border-color: #4ade80; color: #4ade80; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: #111; border: 1px solid #222; border-radius: 8px;
+            padding: 1rem;
+        }
+        .card h2 { font-size: 0.95rem; margin-bottom: 0.25rem; color: #e0e0e0; font-weight: 600; }
+        .card .hint { color: #666; font-size: 0.75rem; margin-bottom: 0.5rem; }
+        .card .empty { color: #555; font-size: 0.85rem; padding: 2rem 0; text-align: center; }
+
+        .summary {
+            display: flex; gap: 2rem; flex-wrap: wrap;
+            font-size: 0.85rem; color: #888;
+            margin-bottom: 1rem;
+        }
+        .summary span { color: #e0e0e0; }
+        .summary .delta-up { color: #4ade80; }
+        .summary .delta-down { color: #f87171; }
+    </style>
+</head>
+<body>
+    <h1>Trends</h1>
+    <p class="subtitle">How your swing is changing over time. <a href="/">&larr; Back</a></p>
+
+    <div class="range-select">
+        <button data-days="7">7 days</button>
+        <button data-days="30" class="active">30 days</button>
+        <button data-days="90">90 days</button>
+        <button data-days="365">1 year</button>
+    </div>
+
+    <div class="summary" id="summary"></div>
+
+    <div class="grid">
+        <div class="card">
+            <h2>Daily volume</h2>
+            <div class="hint">Swings per day, broken out by tag.</div>
+            <canvas id="chart-volume" height="200"></canvas>
+        </div>
+        <div class="card">
+            <h2>Tempo (backswing : downswing)</h2>
+            <div class="hint">Tour pros average ~3:1. Higher = slower backswing relative to downswing.</div>
+            <canvas id="chart-tempo" height="200"></canvas>
+        </div>
+        <div class="card">
+            <h2>Head stability</h2>
+            <div class="hint">Std dev of head position. Lower = steadier head through the swing.</div>
+            <canvas id="chart-head" height="200"></canvas>
+        </div>
+        <div class="card">
+            <h2>Hip rotation</h2>
+            <div class="hint">Total hip rotation in degrees during the swing.</div>
+            <canvas id="chart-hip" height="200"></canvas>
+        </div>
+        <div class="card">
+            <h2>Shoulder rotation</h2>
+            <div class="hint">Total shoulder rotation in degrees during the swing.</div>
+            <canvas id="chart-shoulder" height="200"></canvas>
+        </div>
+    </div>
+
+    <script>
+    const charts = {};
+    let currentDays = 30;
+
+    const baseLine = {
+        type: 'line',
+        options: {
+            responsive: true,
+            animation: false,
+            interaction: { mode: 'nearest', intersect: false },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'day' },
+                    ticks: { color: '#666', maxTicksLimit: 8 },
+                    grid: { color: '#1a1a1a' },
+                },
+                y: {
+                    ticks: { color: '#666' },
+                    grid: { color: '#1a1a1a' },
+                },
+            },
+            plugins: {
+                legend: { display: true, labels: { color: '#aaa', boxWidth: 12, font: { size: 11 } } },
+            },
+        },
+    };
+
+    function makeMetricChart(canvasId, label, color) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        return new Chart(ctx, {
+            ...baseLine,
+            data: {
+                datasets: [
+                    {
+                        label: 'per swing',
+                        data: [],
+                        borderColor: 'transparent',
+                        backgroundColor: color + '66',
+                        pointRadius: 3,
+                        showLine: false,
+                    },
+                    {
+                        label: 'daily avg',
+                        data: [],
+                        borderColor: color,
+                        backgroundColor: color + '22',
+                        pointRadius: 0,
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: false,
+                    },
+                ],
+            },
+        });
+    }
+
+    charts.tempo    = makeMetricChart('chart-tempo',    'Tempo',     '#4ade80');
+    charts.head     = makeMetricChart('chart-head',     'Head stab', '#60a5fa');
+    charts.hip      = makeMetricChart('chart-hip',      'Hip rot',   '#fbbf24');
+    charts.shoulder = makeMetricChart('chart-shoulder', 'Shoulder',  '#c084fc');
+
+    charts.volume = new Chart(document.getElementById('chart-volume').getContext('2d'), {
+        type: 'bar',
+        options: {
+            responsive: true,
+            animation: false,
+            scales: {
+                x: {
+                    type: 'time',
+                    time: { unit: 'day' },
+                    stacked: true,
+                    ticks: { color: '#666', maxTicksLimit: 8 },
+                    grid: { color: '#1a1a1a' },
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: { color: '#666', precision: 0 },
+                    grid: { color: '#1a1a1a' },
+                },
+            },
+            plugins: {
+                legend: { labels: { color: '#aaa', boxWidth: 12, font: { size: 11 } } },
+            },
+        },
+        data: {
+            datasets: [
+                { label: 'good', data: [], backgroundColor: '#4ade80' },
+                { label: 'untagged', data: [], backgroundColor: '#555' },
+                { label: 'bad', data: [], backgroundColor: '#f87171' },
+            ],
+        },
+    });
+
+    function updateMetric(name, key, swings, daily) {
+        const perSwing = swings
+            .filter(s => s[key] !== null && s[key] !== undefined)
+            .map(s => ({ x: s.timestamp, y: s[key] }));
+        const dailyKey = key === 'tempo_ratio' ? 'tempo_avg'
+                      : key === 'head_stability' ? 'head_stability_avg'
+                      : key === 'hip_rotation' ? 'hip_rotation_avg'
+                      : 'shoulder_rotation_avg';
+        const dailyPts = daily
+            .filter(d => d[dailyKey] !== null && d[dailyKey] !== undefined)
+            .map(d => ({ x: d.date, y: d[dailyKey] }));
+        const c = charts[name];
+        c.data.datasets[0].data = perSwing;
+        c.data.datasets[1].data = dailyPts;
+        c.update();
+    }
+
+    function updateVolume(daily) {
+        const labels = daily.map(d => d.date);
+        const good = daily.map(d => ({ x: d.date, y: d.good }));
+        const bad = daily.map(d => ({ x: d.date, y: d.bad }));
+        const untagged = daily.map(d => ({ x: d.date, y: d.count - d.good - d.bad }));
+        charts.volume.data.labels = labels;
+        charts.volume.data.datasets[0].data = good;
+        charts.volume.data.datasets[1].data = untagged;
+        charts.volume.data.datasets[2].data = bad;
+        charts.volume.update();
+    }
+
+    function updateSummary(swings, daily, days) {
+        const total = swings.length;
+        const good = swings.filter(s => s.tag === 'good').length;
+        const bad = swings.filter(s => s.tag === 'bad').length;
+        const goodRate = total > 0 ? Math.round(100 * good / total) : 0;
+
+        // Rolling-half comparison: average of first half vs second half of period
+        function halfAvg(field) {
+            const vals = swings.map(s => s[field]).filter(v => v !== null && v !== undefined);
+            if (vals.length < 4) return null;
+            const mid = Math.floor(vals.length / 2);
+            const first = vals.slice(0, mid);
+            const second = vals.slice(mid);
+            const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+            return { earlier: avg(first), recent: avg(second) };
+        }
+
+        const tempoTrend = halfAvg('tempo_ratio');
+        const headTrend = halfAvg('head_stability');
+
+        function fmtDelta(t, betterDirection, fixed = 2) {
+            if (!t) return '';
+            const delta = t.recent - t.earlier;
+            const pct = t.earlier !== 0 ? (delta / t.earlier) * 100 : 0;
+            const arrow = delta > 0 ? '▲' : '▼';
+            const isBetter = betterDirection === 'down' ? delta < 0 : delta > 0;
+            const cls = isBetter ? 'delta-up' : 'delta-down';
+            return `<span class="${cls}">${arrow} ${Math.abs(pct).toFixed(0)}%</span>`;
+        }
+
+        document.getElementById('summary').innerHTML = `
+            <div>Last ${days}d: <span>${total}</span> swings</div>
+            <div>Good: <span style="color:#4ade80">${good}</span> (${goodRate}%)</div>
+            <div>Bad: <span style="color:#f87171">${bad}</span></div>
+            ${tempoTrend ? `<div>Tempo trend: ${fmtDelta(tempoTrend, 'up')}</div>` : ''}
+            ${headTrend ? `<div>Head stability: ${fmtDelta(headTrend, 'down')}</div>` : ''}
+        `;
+    }
+
+    async function loadTrends(days) {
+        currentDays = days;
+        const resp = await fetch('/api/trends?days=' + days);
+        const data = await resp.json();
+        updateMetric('tempo',    'tempo_ratio',      data.swings, data.daily);
+        updateMetric('head',     'head_stability',   data.swings, data.daily);
+        updateMetric('hip',      'hip_rotation',     data.swings, data.daily);
+        updateMetric('shoulder', 'shoulder_rotation', data.swings, data.daily);
+        updateVolume(data.daily);
+        updateSummary(data.swings, data.daily, days);
+    }
+
+    document.querySelectorAll('.range-select button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.range-select button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            loadTrends(parseInt(btn.dataset.days));
+        });
+    });
+
+    loadTrends(30);
+    </script>
+</body>
+</html>

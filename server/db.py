@@ -254,3 +254,81 @@ class SwingDB:
             "SELECT * FROM swing_analysis WHERE swing_id = ?", (swing_id,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_trends(self, days: int = 30) -> dict:
+        """Per-swing analysis points + per-day aggregates over the last N days.
+
+        Pose analysis can produce one row per camera per swing; we average
+        across cameras to get a single number per swing. Days with no swings
+        are omitted (the frontend can render gaps).
+        """
+        cutoff = datetime.now().timestamp() - days * 86400
+        cutoff_iso = datetime.fromtimestamp(cutoff).isoformat()
+
+        rows = self._conn.execute(
+            """
+            SELECT s.id, s.timestamp, s.tag,
+                   AVG(a.tempo_ratio)        AS tempo_ratio,
+                   AVG(a.head_stability)     AS head_stability,
+                   AVG(a.hip_rotation)       AS hip_rotation,
+                   AVG(a.shoulder_rotation)  AS shoulder_rotation
+            FROM swings s
+            LEFT JOIN swing_analysis a ON a.swing_id = s.id
+            WHERE s.timestamp >= ?
+            GROUP BY s.id
+            ORDER BY s.timestamp ASC
+            """,
+            (cutoff_iso,),
+        ).fetchall()
+
+        swings = [
+            {
+                "id": r["id"],
+                "timestamp": r["timestamp"],
+                "tag": r["tag"],
+                "tempo_ratio": r["tempo_ratio"],
+                "head_stability": r["head_stability"],
+                "hip_rotation": r["hip_rotation"],
+                "shoulder_rotation": r["shoulder_rotation"],
+            }
+            for r in rows
+        ]
+
+        # Per-day aggregates
+        by_day: dict[str, dict] = {}
+        for s in swings:
+            day = s["timestamp"][:10]  # YYYY-MM-DD
+            d = by_day.setdefault(day, {
+                "date": day, "count": 0, "good": 0, "bad": 0,
+                "_tempo": [], "_head": [], "_hip": [], "_shoulder": [],
+            })
+            d["count"] += 1
+            if s["tag"] == "good":
+                d["good"] += 1
+            elif s["tag"] == "bad":
+                d["bad"] += 1
+            for src, dst in (
+                ("tempo_ratio", "_tempo"),
+                ("head_stability", "_head"),
+                ("hip_rotation", "_hip"),
+                ("shoulder_rotation", "_shoulder"),
+            ):
+                if s[src] is not None:
+                    d[dst].append(s[src])
+
+        daily = []
+        for day in sorted(by_day):
+            d = by_day[day]
+            avg = lambda key: round(sum(d[key]) / len(d[key]), 3) if d[key] else None
+            daily.append({
+                "date": d["date"],
+                "count": d["count"],
+                "good": d["good"],
+                "bad": d["bad"],
+                "tempo_avg": avg("_tempo"),
+                "head_stability_avg": avg("_head"),
+                "hip_rotation_avg": avg("_hip"),
+                "shoulder_rotation_avg": avg("_shoulder"),
+            })
+
+        return {"swings": swings, "daily": daily, "days": days}

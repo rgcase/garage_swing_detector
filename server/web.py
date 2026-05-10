@@ -314,6 +314,15 @@ def create_app(
             raise HTTPException(404, "Swing not found")
         return db.get_analysis(swing_id)
 
+    @app.get("/api/trends")
+    async def api_trends(days: int = 30):
+        """Per-swing analysis points + per-day aggregates for the last N days."""
+        return db.get_trends(days=days)
+
+    @app.get("/trends", response_class=HTMLResponse)
+    async def trends_page(request: Request):
+        return templates.TemplateResponse("trends.html", {"request": request})
+
     @app.get("/api/stats")
     async def api_stats():
         return db.get_stats()
