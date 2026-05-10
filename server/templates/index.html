@@ -393,7 +393,32 @@
             const res = await fetch(`/api/swings/${id}`, { method: 'DELETE' });
             if (res.ok) {
                 document.querySelector(`[data-swing-id="${id}"]`).remove();
+                pruneEmptySessions();
             }
+        }
+
+        // Session headers are server-rendered as siblings of swing cards in a
+        // flat list, so deleting a card leaves a stale header behind. Walk all
+        // headers and either decrement their count or remove them entirely.
+        function pruneEmptySessions() {
+            const list = document.querySelector('.swing-list');
+            if (!list) return;
+            const headers = [...list.querySelectorAll('.session-header')];
+            headers.forEach((header, i) => {
+                const next = headers[i + 1] || null;
+                let count = 0;
+                let n = header.nextElementSibling;
+                while (n && n !== next) {
+                    if (n.classList.contains('swing-card')) count++;
+                    n = n.nextElementSibling;
+                }
+                if (count === 0) {
+                    header.remove();
+                } else {
+                    const span = header.querySelector('.session-stats span');
+                    if (span) span.textContent = `${count} swing${count === 1 ? '' : 's'}`;
+                }
+            });
         }
 
         async function triggerTestSwing(btn) {

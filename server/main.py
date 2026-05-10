@@ -207,41 +207,40 @@ class SwingCamServer:
             logger.info(f"Configured camera: {name} ({cam['angle']}) on port {cam['port']}")
 
     def trigger_test_swing(self) -> str:
-        """Inject a synthetic swing event through the normal detection path.
+        """Inject synthetic swing events through the normal detection path.
 
-        Used by the UI's "Test swing" button. Goes through `_on_swing_detected`
-        so it exercises DB write, audio correlation, ntfy push, gesture watcher,
-        and clip save. Picks a camera with frames in its buffer so the saved
-        clip actually contains video; falls back to cameras[0] if nothing is
-        streaming.
+        Used by the UI's "Test swing" button. Fires one event per connected
+        camera with the same trigger time so the correlation logic groups them
+        into a single swing — the test produces clips from every camera that's
+        actually streaming. Falls back to cameras[0] if nothing is connected.
         """
         if not self.config.get("cameras"):
             raise RuntimeError("no cameras configured")
-        # Prefer a camera whose buffer has recent frames — otherwise the test
-        # creates an orphan DB row with no clip and looks broken.
-        chosen = None
         now = time.time()
+        active = []
         for cam in self.config["cameras"]:
             buf = self.buffers.get(cam["name"])
             latest = buf.get_latest() if buf else None
             if latest and (now - latest.timestamp) < 5.0:
-                chosen = cam
-                break
-        if chosen is None:
-            chosen = self.config["cameras"][0]
+                active.append(cam)
+        if not active:
+            active = [self.config["cameras"][0]]
             logger.warning(
-                f"Test swing: no streams connected; using {chosen['name']} "
+                f"Test swing: no streams connected; using {active[0]['name']} "
                 "anyway (clip will be empty)"
             )
-        event = SwingEvent(
-            trigger_time=time.time(),
-            camera_name=chosen["name"],
-            motion_level=5.0,
-            confidence=0.8,
-            spike_duration=0.5,
-        )
-        self._on_swing_detected(event)
-        return chosen["name"]
+        # Same trigger_time for every event so the correlation window matches them.
+        trigger_time = time.time()
+        for cam in active:
+            event = SwingEvent(
+                trigger_time=trigger_time,
+                camera_name=cam["name"],
+                motion_level=5.0,
+                confidence=0.8,
+                spike_duration=0.5,
+            )
+            self._on_swing_detected(event)
+        return ", ".join(c["name"] for c in active)
 
     def _notify_swing(self, swing_id: str):
         """Fire a push notification for a freshly-created swing.
