@@ -29,6 +29,7 @@
 - [x] RTSP and USB camera support
 - [x] Trend charts (tempo, head stability, rotation, daily volume over time)
 - [x] Swing sequence export (4-up address/top/impact/finish strip image)
+- [x] Push notifications (ntfy.sh integration; fires on swing detection)
 
 ## Up Next
 
@@ -36,9 +37,6 @@
 
 ### Club tagging
 Quick-select which club you're hitting (D, 3W, 7i, PW, etc.) per swing or per session. Filter and compare metrics by club. A driver swing has very different metrics than a wedge.
-
-### Push notifications
-Send a notification to your phone when a swing is recorded. Tap the notification to jump directly to the swing in the web UI.
 
 ### Impact sound detection
 Add USB microphone support as a secondary detection signal. The crack of ball impact is very distinctive and would reduce false positives. Could also distinguish real swings from practice swings (no ball).

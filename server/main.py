@@ -21,6 +21,7 @@ from audio_receiver import AudioReceiver
 from clip_saver import ClipSaver
 from db import SwingDB
 from gesture_detector import GestureDetector
+from notifier import Notifier
 from pose_analyzer import PoseAnalyzer
 from stream_receiver import CircularFrameBuffer, StreamReceiver
 from swing_detector import SwingDetector, SwingEvent
@@ -134,6 +135,17 @@ class SwingCamServer:
         self._audio_window = audio_cfg.get("correlation_window", 0.6)
         self._audio_threshold = audio_cfg.get("impact_threshold", 0.4)
 
+        # Push notifications (ntfy)
+        ntfy_cfg = (self.config.get("notifications", {}) or {}).get("ntfy", {}) or {}
+        self.notifier = Notifier(
+            enabled=ntfy_cfg.get("enabled", False),
+            server=ntfy_cfg.get("server", "https://ntfy.sh"),
+            topic=ntfy_cfg.get("topic"),
+            priority=ntfy_cfg.get("priority", 4),
+            tags=ntfy_cfg.get("tags", "golf"),
+            click_url=ntfy_cfg.get("click_url"),
+        )
+
         # For multi-camera swing correlation
         self._pending_events: list[SwingEvent] = []
         self._pending_lock = threading.Lock()
@@ -194,6 +206,18 @@ class SwingCamServer:
 
             logger.info(f"Configured camera: {name} ({cam['angle']}) on port {cam['port']}")
 
+    def _notify_swing(self, swing_id: str):
+        """Fire a push notification for a freshly-created swing.
+
+        Called *after* _record_impact so we can include the audio peak
+        if one was heard. Non-blocking — Notifier posts in a daemon thread.
+        """
+        if not self.notifier.enabled:
+            return
+        swing = self.db.get_swing(swing_id)
+        peak = swing.impact_peak if swing else None
+        self.notifier.notify_swing(swing_id, impact_peak=peak)
+
     def _record_impact(self, swing_id: str, trigger_time: float, spike_duration: float):
         """Look for an impact peak in the audio buffer near the swing trigger
         and persist it on the swing record. No-op if audio isn't running."""
@@ -236,6 +260,7 @@ class SwingCamServer:
             swing_id = self.db.generate_swing_id()
             self.db.create_swing(swing_id, event.trigger_time)
             self._record_impact(swing_id, event.trigger_time, event.spike_duration)
+            self._notify_swing(swing_id)
             self.gesture_detector.start_watching(swing_id)
             cam_cfg = self.config["cameras"][0]
             angle = cam_cfg.get("angle", "unknown")
@@ -283,6 +308,7 @@ class SwingCamServer:
                 # may have caught the actual contact moment.
                 impact_spike = max(matched.spike_duration, event.spike_duration)
                 self._record_impact(swing_id, shared_trigger, impact_spike)
+                self._notify_swing(swing_id)
                 self.gesture_detector.start_watching(swing_id)
 
                 for evt in [matched, event]:
@@ -336,6 +362,7 @@ class SwingCamServer:
                 swing_id = self.db.generate_swing_id()
                 self.db.create_swing(swing_id, event.trigger_time)
                 self._record_impact(swing_id, event.trigger_time, event.spike_duration)
+                self._notify_swing(swing_id)
                 self.gesture_detector.start_watching(swing_id)
                 cam_cfg = next(
                     c for c in self.config["cameras"] if c["name"] == event.camera_name

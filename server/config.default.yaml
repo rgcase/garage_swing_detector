@@ -92,6 +92,21 @@ audio:
   correlation_window: 0.6       # ± seconds around swing trigger to look for impact
   impact_threshold: 0.4         # 0.0-1.0 normalized peak; tune for your gain
 
+# Push notifications via ntfy (https://ntfy.sh). Install the ntfy app on
+# your phone and subscribe to the topic below. The sound is configured
+# per-topic in the app, not by the server.
+notifications:
+  ntfy:
+    enabled: false
+    server: "https://ntfy.sh"
+    # Pick something obscure — anyone with the topic name can read your
+    # swing alerts. Treat it like a password.
+    topic: ""
+    priority: 4                 # 1=min, 3=default, 4=high, 5=max (breaks Focus)
+    tags: "golf"                # comma-separated; ntfy maps known names to emojis
+    # Optional URL to open when the notification is tapped (web UI).
+    click_url: ""
+
 database:
   path: "~/.swingcam/swings.db"
 
