@@ -435,6 +435,19 @@ def create_app(
     async def api_stats():
         return db.get_stats()
 
+    @app.post("/api/test/trigger-swing")
+    async def api_test_trigger_swing():
+        """Inject a synthetic swing event so the user can test the full
+        detection→DB→notification→SSE pipeline without taking a swing."""
+        hook = getattr(app, "trigger_test_swing", None)
+        if hook is None:
+            raise HTTPException(503, "Detection pipeline not wired up")
+        try:
+            camera = await asyncio.to_thread(hook)
+        except Exception as e:
+            raise HTTPException(500, str(e))
+        return {"ok": True, "camera": camera}
+
     @app.get("/api/status")
     async def api_status():
         cameras = _camera_status(_receivers, _buffers)

@@ -274,12 +274,15 @@
             Untagged: <span data-stat="untagged">{{ stats.untagged }}</span>
         </div>
     </header>
-    <nav style="padding:0.5rem 2rem;border-bottom:1px solid #181818;font-size:0.8rem;display:flex;gap:1.5rem;flex-wrap:wrap;">
+    <nav style="padding:0.5rem 2rem;border-bottom:1px solid #181818;font-size:0.8rem;display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center;">
         <a href="/live" style="color:#888;text-decoration:none;">Live View</a>
         <a href="/trends" style="color:#888;text-decoration:none;">Trends</a>
         <a href="/compare" style="color:#888;text-decoration:none;">Compare</a>
         <a href="/calibrate" style="color:#888;text-decoration:none;">Calibrate ROI</a>
         <a href="/debug" style="color:#888;text-decoration:none;">Motion Debug</a>
+        <button onclick="triggerTestSwing(this)" style="margin-left:auto;background:#1a1a1a;border:1px solid #333;border-radius:4px;color:#888;padding:0.3rem 0.7rem;font-size:0.75rem;cursor:pointer;">
+            Trigger test swing
+        </button>
     </nav>
 
     <div class="filters">
@@ -391,6 +394,29 @@
             if (res.ok) {
                 document.querySelector(`[data-swing-id="${id}"]`).remove();
             }
+        }
+
+        async function triggerTestSwing(btn) {
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Triggering...';
+            try {
+                const res = await fetch('/api/test/trigger-swing', { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok) {
+                    btn.textContent = `Triggered (${data.camera || 'ok'})`;
+                } else {
+                    btn.textContent = 'Failed';
+                    console.error(data);
+                }
+            } catch (e) {
+                btn.textContent = 'Failed';
+                console.error(e);
+            }
+            setTimeout(() => {
+                btn.textContent = original;
+                btn.disabled = false;
+            }, 2000);
         }
 
         // Unified player: one play/scrub control drives all clips in a swing card.

@@ -206,6 +206,29 @@ class SwingCamServer:
 
             logger.info(f"Configured camera: {name} ({cam['angle']}) on port {cam['port']}")
 
+    def trigger_test_swing(self) -> str:
+        """Inject a synthetic swing event through the normal detection path.
+
+        Used by the UI's "Test swing" button. Goes through `_on_swing_detected`
+        so it exercises DB write, audio correlation, ntfy push, gesture watcher,
+        and clip save (the last only succeeds if a stream is connected). Returns
+        the camera name that was targeted.
+        """
+        if not self.config.get("cameras"):
+            raise RuntimeError("no cameras configured")
+        cam = self.config["cameras"][0]
+        # Confidence above SINGLE_CAM_CONFIDENCE_MIN so the multi-cam flush
+        # path won't reject it; spike_duration roughly matches a real swing.
+        event = SwingEvent(
+            trigger_time=time.time(),
+            camera_name=cam["name"],
+            motion_level=5.0,
+            confidence=0.8,
+            spike_duration=0.5,
+        )
+        self._on_swing_detected(event)
+        return cam["name"]
+
     def _notify_swing(self, swing_id: str):
         """Fire a push notification for a freshly-created swing.
 
@@ -473,6 +496,7 @@ class SwingCamServer:
             config_path=self._config_path,
         )
         self._app = app
+        app.trigger_test_swing = self.trigger_test_swing
 
         server_thread = threading.Thread(
             target=lambda: uvicorn.run(
