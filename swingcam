@@ -34,11 +34,10 @@ ERR_FILE="$LOG_DIR/swingcam.err"
 PLIST_NAME="com.swingcam.server"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 
-# Pi streamer daemon (Linux side; macOS uses launchd above instead)
-STREAM_PID_FILE="$APP_DIR/stream.pid"
-STREAM_ARGS_FILE="$APP_DIR/stream.args"
-STREAM_LOG="$LOG_DIR/stream.log"
-LOG_ROTATE_PY="$SERVER_DIR/_log_rotate.py"
+# Pi streamer service (Linux/systemd). swingcam stream start writes
+# this unit file and enables it; swingcam stream stop disables it.
+SYSTEMD_UNIT_NAME="swing-cam-stream.service"
+SYSTEMD_UNIT_PATH="/etc/systemd/system/$SYSTEMD_UNIT_NAME"
 
 # ── Helpers ──
 
@@ -339,142 +338,151 @@ cmd_update() {
     _green "Update complete."
 }
 
-_stream_is_running() {
-    [ -f "$STREAM_PID_FILE" ] || return 1
-    local pid
-    pid=$(cat "$STREAM_PID_FILE" 2>/dev/null)
-    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+_is_linux() {
+    [[ "$(uname -s)" == "Linux" ]]
 }
 
-_cleanup_old_logrotate() {
-    # Migration: previous releases shelled out to logrotate via cron.
-    # Now we rotate inline by piping the daemon's stdout through Python's
-    # RotatingFileHandler, matching the server-side mechanism. Sweep up
-    # the old artifacts so the user doesn't end up with two rotators.
-    if command -v crontab >/dev/null 2>&1; then
-        local existing
-        existing=$(crontab -l 2>/dev/null || true)
-        if [ -n "$existing" ] && echo "$existing" | grep -qF "$APP_DIR/logrotate.conf"; then
-            echo "$existing" | grep -vF "$APP_DIR/logrotate.conf" | crontab -
-            echo "  Removed old logrotate cron entry"
-        fi
+_require_linux_systemd() {
+    if ! _is_linux; then
+        _red "stream $1 manages a systemd unit and only runs on the Pi (Linux)."
+        exit 1
     fi
-    rm -f "$APP_DIR/logrotate.conf" "$APP_DIR/logrotate.state"
+    if ! command -v systemctl >/dev/null 2>&1; then
+        _red "systemctl not found — swing-cam stream service requires systemd."
+        exit 1
+    fi
+}
+
+_require_root() {
+    if [ "$EUID" -ne 0 ]; then
+        _red "stream $1 writes to /etc/systemd/system — re-run with sudo."
+        exit 1
+    fi
 }
 
 cmd_stream_start() {
+    _require_linux_systemd "start"
+    _require_root "start"
+
     if [ "$#" -eq 0 ]; then
-        _red "Usage: swingcam stream start <ff|dtl> [server]"
+        _red "Usage: sudo swingcam stream start <ff|dtl> <server> [port]"
         exit 1
     fi
 
-    if _stream_is_running; then
-        local pid
-        pid=$(cat "$STREAM_PID_FILE")
-        _yellow "Stream already running (PID $pid)"
-        return 0
+    local angle_arg="$1"
+    local server_arg="${2:-}"
+    local port_arg="${3:-}"
+
+    case "$angle_arg" in
+        ff|front-facing|dtl|down-the-line) ;;
+        *)
+            _red "Invalid angle: '$angle_arg' (must be ff|front-facing or dtl|down-the-line)"
+            exit 1
+            ;;
+    esac
+
+    # Resolve server: explicit arg first, then the calling user's pi.env.
+    # Under sudo, $HOME points at /root, so consult $SUDO_USER's home directly.
+    local target_user="${SUDO_USER:-$(whoami)}"
+    local target_home
+    target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
+    target_home="${target_home:-$HOME}"
+    local pi_env="$target_home/.swingcam/pi.env"
+
+    local server_ip="$server_arg"
+    if [ -z "$server_ip" ] && [ -f "$pi_env" ]; then
+        # shellcheck disable=SC1090
+        source "$pi_env"
+        server_ip="${SWINGCAM_SERVER:-}"
+    fi
+    if [ -z "$server_ip" ]; then
+        _red "Server IP required. Usage: sudo swingcam stream start <ff|dtl> <server> [port]"
+        exit 1
     fi
 
-    mkdir -p "$APP_DIR" "$LOG_DIR"
-    # One arg per line so values with spaces survive a roundtrip.
-    printf '%s\n' "$@" > "$STREAM_ARGS_FILE"
+    # Persist the resolved server for subsequent foreground `swingcam stream`
+    # invocations by the same user (matches existing pi.env behavior).
+    install -d -o "$target_user" "$target_home/.swingcam"
+    printf 'SWINGCAM_SERVER=%s\n' "$server_ip" > "$pi_env"
+    chown "$target_user" "$pi_env"
 
-    _cleanup_old_logrotate
-
-    # Detach via setsid so the streamer becomes its own process group
-    # leader; that lets `stream stop` send SIGTERM to the whole group
-    # (bash + rpicam-vid + python) with a single negative-pid kill.
-    #
-    # The daemon's stdout pipes through _log_rotate.py so RotatingFileHandler
-    # rotates the log inline at 10MB × 5 backups, mirroring the server's
-    # self-rotation. The placeholder "_" fills $0 of the inner bash so
-    # "$@" maps cleanly to the original cmd_stream args.
-    setsid nohup bash -c "
-\"\$1\" stream \"\${@:2}\" 2>&1 | exec python3 -u \"$LOG_ROTATE_PY\" \"$STREAM_LOG\"
-" _ "$0" "$@" < /dev/null > /dev/null 2>&1 &
-    local pid=$!
-    disown "$pid" 2>/dev/null || true
-    echo "$pid" > "$STREAM_PID_FILE"
-
-    sleep 1
-    if _stream_is_running; then
-        _green "Stream started (PID $pid)"
-        echo "  Logs:  $STREAM_LOG"
-    else
-        _red "Failed to start. Check $STREAM_LOG"
-        rm -f "$STREAM_PID_FILE"
-        return 1
+    local exec_line="$REPO_DIR/swingcam stream $angle_arg $server_ip"
+    if [ -n "$port_arg" ]; then
+        exec_line="$exec_line $port_arg"
     fi
+
+    cat > "$SYSTEMD_UNIT_PATH" <<UNIT
+[Unit]
+Description=swing-cam H.264 stream ($angle_arg → $server_ip)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$exec_line
+Restart=always
+RestartSec=10
+User=$target_user
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=swing-cam-stream
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+    systemctl daemon-reload
+    systemctl enable --now "$SYSTEMD_UNIT_NAME"
+
+    _green "Stream service installed and running ($angle_arg → $server_ip)."
+    echo "  Unit:    $SYSTEMD_UNIT_PATH"
+    echo "  Status:  sudo systemctl status $SYSTEMD_UNIT_NAME"
+    echo "  Logs:    journalctl -u $SYSTEMD_UNIT_NAME -f"
 }
 
 cmd_stream_stop() {
-    if ! _stream_is_running; then
-        _yellow "Stream not running."
-        rm -f "$STREAM_PID_FILE"
+    _require_linux_systemd "stop"
+    _require_root "stop"
+
+    if [ ! -f "$SYSTEMD_UNIT_PATH" ]; then
+        _yellow "Stream service is not installed."
         return 0
     fi
-
-    local pid
-    pid=$(cat "$STREAM_PID_FILE")
-    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
-
-    for _ in 1 2 3 4 5; do
-        _stream_is_running || break
-        sleep 1
-    done
-
-    if _stream_is_running; then
-        _yellow "Did not stop in 5s, sending SIGKILL..."
-        kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
-    fi
-
-    rm -f "$STREAM_PID_FILE"
-    _green "Stream stopped."
+    systemctl disable --now "$SYSTEMD_UNIT_NAME" 2>/dev/null || true
+    _green "Stream service stopped and disabled at boot."
+    echo "  Unit file kept at $SYSTEMD_UNIT_PATH; re-enable with: sudo swingcam stream start ..."
 }
 
 cmd_stream_restart() {
-    echo "Restarting stream..."
+    _require_linux_systemd "restart"
+    _require_root "restart"
+
     if [ "$#" -gt 0 ]; then
-        cmd_stream_stop
         cmd_stream_start "$@"
-    elif [ -f "$STREAM_ARGS_FILE" ]; then
-        local args=()
-        while IFS= read -r line; do
-            args+=("$line")
-        done < "$STREAM_ARGS_FILE"
-        cmd_stream_stop
-        cmd_stream_start "${args[@]}"
-    else
-        _red "No saved args. Use: swingcam stream start <ff|dtl> [server]"
+        return
+    fi
+    if [ ! -f "$SYSTEMD_UNIT_PATH" ]; then
+        _red "Stream service is not installed. Run: sudo swingcam stream start <ff|dtl> <server>"
         exit 1
     fi
+    systemctl restart "$SYSTEMD_UNIT_NAME"
+    _green "Stream service restarted."
 }
 
 cmd_stream_status() {
-    echo "── stream status ──"
-    if _stream_is_running; then
-        local pid
-        pid=$(cat "$STREAM_PID_FILE")
-        _green "Running (PID $pid)"
-        if [ -f "$STREAM_ARGS_FILE" ]; then
-            local args
-            args=$(tr '\n' ' ' < "$STREAM_ARGS_FILE")
-            echo "  Args: $args"
-        fi
-    else
-        _red "Not running"
+    _require_linux_systemd "status"
+
+    echo "── stream service status ──"
+    if [ ! -f "$SYSTEMD_UNIT_PATH" ]; then
+        _red "Not installed. Install with: sudo swingcam stream start <ff|dtl> <server>"
+        return 0
     fi
-    echo ""
-    echo "── Recent logs ──"
-    tail -10 "$STREAM_LOG" 2>/dev/null || echo "(no log yet)"
+    systemctl status "$SYSTEMD_UNIT_NAME" --no-pager || true
 }
 
 cmd_stream_logs() {
-    if [ ! -f "$STREAM_LOG" ]; then
-        _red "No stream log yet. Run: swingcam stream start <ff|dtl> [server]"
-        return 1
-    fi
-    tail -f "$STREAM_LOG"
+    _require_linux_systemd "logs"
+    journalctl -u "$SYSTEMD_UNIT_NAME" -f
 }
 
 cmd_stream() {
@@ -683,14 +691,15 @@ Streaming commands:
                     Server is a hostname or IP (e.g. "swingcam" or "192.168.4.234").
                     Port defaults based on angle but can be overridden.
 
-  stream start <ff|dtl> [server] [port]
-                  Same as `stream` but detached as a background daemon.
-                  Logs go to ~/.swingcam/logs/stream.log.
+  stream start <ff|dtl> <server> [port]   (Pi only, requires sudo)
+                  Install a systemd unit that streams to the server, runs
+                  on every boot, and auto-restarts on failure. Logs go to
+                  the systemd journal. Re-run to update the angle/server.
 
-  stream stop     Stop the detached stream daemon.
-  stream restart  Restart with the args saved from `stream start`.
-  stream status   Show daemon state and recent log lines.
-  stream logs     Tail the stream log (Ctrl+C to stop).
+  stream stop     (Pi, sudo) Stop and disable the stream service.
+  stream restart  (Pi, sudo) Restart the stream service. With args, re-installs.
+  stream status   (Pi)       systemctl status of the stream service.
+  stream logs     (Pi)       Tail the journal for the stream service.
 
   stream --test <ff|dtl> [server] [port]
                   Send a synthetic test stream that simulates a swing

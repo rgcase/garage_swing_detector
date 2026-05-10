@@ -59,12 +59,17 @@ Web UI runs at `http://localhost:8080` by default.
 The Pi runs Raspberry Pi OS Lite (Bookworm). `rpicam-vid` is used for streaming (part of the default install). No Python needed on the Pi.
 
 ```bash
-# Stream manually (angle → port: ff=9556, dtl=9557)
+# Stream manually in the foreground (angle → port: ff=9556, dtl=9557)
 ./swingcam stream ff <server_ip>
 ./swingcam stream dtl <server_ip>
-```
 
-`pi/setup.sh` installs the stream as a systemd service.
+# Install the stream as a systemd service (auto-start on boot, auto-restart)
+sudo ./swingcam stream start ff <server_ip>
+sudo ./swingcam stream stop          # disable on boot + stop now
+sudo ./swingcam stream restart        # restart with current args
+./swingcam stream status              # systemctl status
+./swingcam stream logs                # journalctl -fu swing-cam-stream
+```
 
 ### Testing without a Pi
 

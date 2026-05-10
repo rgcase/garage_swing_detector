@@ -82,9 +82,7 @@ See `server/config.yaml` for all options. Key settings:
 
 ```
 swing-cam/
-├── pi/
-│   ├── setup.sh                  # Pi setup/install script
-│   └── swing-cam-stream.service  # systemd unit file (calls `swingcam stream`)
+├── swingcam                      # CLI: server daemon (Mac) + Pi stream service
 ├── server/
 │   ├── main.py                   # Entry point
 │   ├── config.yaml               # Configuration
