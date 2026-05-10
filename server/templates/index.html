@@ -586,7 +586,11 @@
                 return;
             }
             const a = data[0];
-            let html = '<div class="metrics-grid">';
+            let html = '';
+            if (a.quality === 'low') {
+                html += '<div style="color:#fbbf24;font-size:0.8rem;margin-bottom:0.5rem;">⚠ Low-quality detection — body wasn\'t reliably tracked, metrics omitted.</div>';
+            }
+            html += '<div class="metrics-grid">';
             if (a.tempo_ratio != null) {
                 html += `<div class="metric"><span class="label">Tempo</span><span class="value">${a.tempo_ratio}:1</span></div>`;
             }

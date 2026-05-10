@@ -31,6 +31,7 @@
 - [x] Swing sequence export (4-up address/top/impact/finish strip image)
 - [x] Push notifications (ntfy.sh integration; fires on swing detection)
 - [x] Swing overlay (ghost-overlay two swings on /compare with adjustable opacity)
+- [x] Improved pose phase detection (proper address/finish, audio-anchored impact, quality gate)
 
 ## Up Next
 

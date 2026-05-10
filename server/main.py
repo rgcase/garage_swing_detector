@@ -437,6 +437,7 @@ class SwingCamServer:
             hip_rotation=result.get("hip_rotation"),
             shoulder_rotation=result.get("shoulder_rotation"),
             phases_json=json.dumps(result.get("phases", [])),
+            quality=result.get("quality"),
         )
 
     def _on_clip_saved(
@@ -447,8 +448,14 @@ class SwingCamServer:
             self.db.add_clip(swing_id, camera_name, angle, filepath,
                              trim_start=trim_start, trim_end=trim_end)
             logger.info(f"Clip saved for swing {swing_id}: {filepath}")
-            # Queue for pose analysis
-            self.pose_analyzer.queue_analysis(swing_id, camera_name, filepath)
+            # Queue for pose analysis with audio impact + pre_seconds so
+            # the analyzer can anchor the impact frame and locate address.
+            swing = self.db.get_swing(swing_id)
+            self.pose_analyzer.queue_analysis(
+                swing_id, camera_name, filepath,
+                pre_seconds=float(self.config["clips"]["pre_seconds"]),
+                impact_offset=swing.impact_offset if swing else None,
+            )
             # Notify SSE subscribers of the new/updated swing
             if self._app and hasattr(self._app, "notify_new_swing"):
                 self._app.notify_new_swing(swing_id)

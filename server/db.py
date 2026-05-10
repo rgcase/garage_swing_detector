@@ -73,6 +73,7 @@ class SwingDB:
                 shoulder_rotation REAL,
                 phases_json TEXT,
                 landmarks_summary TEXT,
+                quality TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_analysis_swing ON swing_analysis(swing_id);
@@ -92,6 +93,10 @@ class SwingDB:
             conn.execute("ALTER TABLE swings ADD COLUMN impact_offset REAL")
         if "impact_peak" not in swing_cols:
             conn.execute("ALTER TABLE swings ADD COLUMN impact_peak REAL")
+
+        analysis_cols = {row[1] for row in conn.execute("PRAGMA table_info(swing_analysis)").fetchall()}
+        if "quality" not in analysis_cols:
+            conn.execute("ALTER TABLE swing_analysis ADD COLUMN quality TEXT")
 
         conn.commit()
         conn.close()
@@ -236,16 +241,17 @@ class SwingDB:
         hip_rotation: float | None,
         shoulder_rotation: float | None,
         phases_json: str | None,
+        quality: str | None = None,
     ):
         self._conn.execute(
             """INSERT INTO swing_analysis
                (swing_id, camera_name, tempo_ratio, backswing_frames,
                 downswing_frames, head_stability, hip_rotation,
-                shoulder_rotation, phases_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                shoulder_rotation, phases_json, quality)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (swing_id, camera_name, tempo_ratio, backswing_frames,
              downswing_frames, head_stability, hip_rotation,
-             shoulder_rotation, phases_json),
+             shoulder_rotation, phases_json, quality),
         )
         self._conn.commit()
 
